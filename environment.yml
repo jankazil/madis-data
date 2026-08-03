@@ -1,0 +1,17 @@
+name: madis_data
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pipreqs
+  - pre-commit
+  - ruff
+  - mypy
+  - mamba
+  - jupyter_client
+  - jupyter_core
+  - notebook
+  - ipykernel
+#  - pip:
+#      - git+https://github.com/jankazil/madis-data

@@ -23,8 +23,7 @@ The workflow is shown in the [HowTo](https://github.com/jankazil/madis-data/blob
     - solar radiation,
 3. interpolates them to full-hourly time series,
 4. plots the original and the interpolated time series at an individual station over select time intervals,
-5. counts the number of stations that have valid data for at least a given fraction of the time,
-6. plots the stations in the state of Colorado on a US map.
+5. plots the stations in the state of Colorado on a US map.
 
 ### Requirements
 This notebook requires the Jupyter kernel madis-data, which is automaticaly installed as part of the madis-data conda development environment. The conda development environment can be installed from the root directory of the madis-data distribution with

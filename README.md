@@ -32,7 +32,6 @@ This notebook requires the Jupyter kernel madis-data, which is automaticaly inst
 ```bash
 make setup-dev-env
 ```
-<!--
 ## Installation
 
 ### pip
@@ -47,6 +46,7 @@ pip install madis-data
 mamba install -c jan.kazil -c conda-forge madis-data
 ```
 
+<!--
 ## Executables
 
 ## Public API

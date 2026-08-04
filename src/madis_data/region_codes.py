@@ -1,0 +1,361 @@
+'''
+Provides
+
+  - Three-letter ISO 3166-1 alpha-3 country codes
+  - Two-letter U.S. state or territory codes
+  - The special region 'CONUS' code
+  - RTO/ISO region codes
+
+  - Function that returns a Geopandas GeoDataFrame specifying the above regions
+'''
+
+from importlib.resources import as_file, files
+
+import geopandas as gpd
+
+from madis_data import rto_iso
+
+
+def get_region_gdf(region_code: str) -> gpd.GeoDataFrame | None:
+    '''
+    Return the GeoDataFrame specifying the requested region, based
+    on the region codes defined in this module. If the region code
+    is not recognized, return None.
+    '''
+    if len(region_code) == 2:
+        if region_code not in us_states_territories:
+            raise ValueError(f'US state/territory code {region_code} is not available.')
+
+        resource = files('madis_data') / 'data' / 'CensusBureau' / 'US_states'
+
+        with as_file(resource) as directory:
+            us_gdf = gpd.read_file(directory / 'tl_2024_us_state.shp')
+
+        region_gdf = us_gdf[us_gdf['STUSPS'] == region_code]
+
+    elif region_code in rto_iso_regions:
+        resource = files('madis_data') / 'data' / 'EIA' / 'RTO_ISO_regions.geojson'
+        with as_file(resource) as path:
+            region_gdf = rto_iso.region(path, region_code)
+
+    elif region_code == conus:
+        resource = files('madis_data') / 'data' / 'CensusBureau' / 'US_states'
+        with as_file(resource) as directory:
+            us_gdf = gpd.read_file(directory / 'tl_2024_us_state.shp')
+
+        exclude_codes = ['AK', 'HI', 'PR', 'GU', 'VI', 'AS', 'MP']
+        region_gdf = us_gdf[~us_gdf['STUSPS'].isin(exclude_codes)]
+
+    else:
+        return None
+
+    return region_gdf
+
+
+#
+# ISO 3166-1 alpha-3 country codes
+#
+
+countries = [
+    'ABW',
+    'AFG',
+    'AGO',
+    'AIA',
+    'ALB',
+    'AND',
+    'ARE',
+    'ARG',
+    'ARM',
+    'ASM',
+    'ATF',
+    'ATG',
+    'AUS',
+    'AUT',
+    'AZE',
+    'BDI',
+    'BEL',
+    'BEN',
+    'BFA',
+    'BGD',
+    'BGR',
+    'BHR',
+    'BHS',
+    'BIH',
+    'BLM',
+    'BLR',
+    'BLZ',
+    'BMU',
+    'BOL',
+    'BRA',
+    'BRB',
+    'BRN',
+    'BTN',
+    'BWA',
+    'CAF',
+    'CAN',
+    'CHE',
+    'CHL',
+    'CHN',
+    'CIV',
+    'CMR',
+    'COD',
+    'COG',
+    'COK',
+    'COL',
+    'COM',
+    'CPV',
+    'CRI',
+    'CUB',
+    'CUW',
+    'CYM',
+    'CYP',
+    'CZE',
+    'DEU',
+    'DJI',
+    'DMA',
+    'DNK',
+    'DOM',
+    'DZA',
+    'ECU',
+    'EGY',
+    'ERI',
+    'ESP',
+    'EST',
+    'ETH',
+    'FIN',
+    'FJI',
+    'FLK',
+    'FRA',
+    'FRO',
+    'FSM',
+    'GAB',
+    'GBR',
+    'GEO',
+    'GGY',
+    'GHA',
+    'GIB',
+    'GIN',
+    'GMB',
+    'GNB',
+    'GNQ',
+    'GRC',
+    'GRD',
+    'GRL',
+    'GTM',
+    'GUM',
+    'GUY',
+    'HKG',
+    'HMD',
+    'HND',
+    'HRV',
+    'HTI',
+    'HUN',
+    'IDN',
+    'IMN',
+    'IND',
+    'IOT',
+    'IRL',
+    'IRN',
+    'IRQ',
+    'ISL',
+    'ISR',
+    'ITA',
+    'JAM',
+    'JEY',
+    'JOR',
+    'JPN',
+    'KAZ',
+    'KEN',
+    'KGZ',
+    'KHM',
+    'KIR',
+    'KNA',
+    'KOR',
+    'KWT',
+    'LAO',
+    'LBN',
+    'LBR',
+    'LBY',
+    'LCA',
+    'LIE',
+    'LKA',
+    'LSO',
+    'LTU',
+    'LUX',
+    'LVA',
+    'MAC',
+    'MAF',
+    'MAR',
+    'MCO',
+    'MDA',
+    'MDG',
+    'MDV',
+    'MEX',
+    'MHL',
+    'MKD',
+    'MLI',
+    'MLT',
+    'MMR',
+    'MNE',
+    'MNG',
+    'MNP',
+    'MOZ',
+    'MRT',
+    'MSR',
+    'MUS',
+    'MWI',
+    'MYS',
+    'NAM',
+    'NCL',
+    'NER',
+    'NFK',
+    'NGA',
+    'NIC',
+    'NIU',
+    'NLD',
+    'NOR',
+    'NPL',
+    'NRU',
+    'NZL',
+    'OMN',
+    'PAK',
+    'PAN',
+    'PCN',
+    'PER',
+    'PHL',
+    'PLW',
+    'PNG',
+    'POL',
+    'PRI',
+    'PRK',
+    'PRT',
+    'PRY',
+    'PSE',
+    'PYF',
+    'QAT',
+    'ROU',
+    'RUS',
+    'RWA',
+    'SAU',
+    'SDN',
+    'SEN',
+    'SGP',
+    'SGS',
+    'SHN',
+    'SLB',
+    'SLE',
+    'SLV',
+    'SMR',
+    'SOM',
+    'SPM',
+    'SRB',
+    'SSD',
+    'STP',
+    'SUR',
+    'SVK',
+    'SVN',
+    'SWE',
+    'SWZ',
+    'SXM',
+    'SYC',
+    'SYR',
+    'TCA',
+    'TCD',
+    'TGO',
+    'THA',
+    'TJK',
+    'TKM',
+    'TLS',
+    'TON',
+    'TTO',
+    'TUN',
+    'TUR',
+    'TUV',
+    'TZA',
+    'UGA',
+    'UKR',
+    'UMI',
+    'URY',
+    'USA',
+    'UZB',
+    'VAT',
+    'VCT',
+    'VEN',
+    'VGB',
+    'VIR',
+    'VNM',
+    'VUT',
+    'WLF',
+    'WSM',
+    'YEM',
+    'ZAF',
+    'ZMB',
+    'ZWE',
+]
+
+#
+# US states, territories, and regions
+#
+
+us_states_territories = [
+    'AK',
+    'AL',
+    'AR',
+    'AS',
+    'AZ',
+    'CA',
+    'CO',
+    'CT',
+    'DC',
+    'DE',
+    'FL',
+    'GA',
+    'GU',
+    'HI',
+    'IA',
+    'ID',
+    'IL',
+    'IN',
+    'KS',
+    'KY',
+    'LA',
+    'MA',
+    'MD',
+    'ME',
+    'MI',
+    'MN',
+    'MO',
+    'MP',
+    'MS',
+    'MT',
+    'NC',
+    'ND',
+    'NE',
+    'NH',
+    'NJ',
+    'NM',
+    'NV',
+    'NY',
+    'OH',
+    'OK',
+    'OR',
+    'PA',
+    'PR',
+    'RI',
+    'SC',
+    'SD',
+    'TN',
+    'TX',
+    'UT',
+    'VA',
+    'VI',
+    'VT',
+    'WA',
+    'WI',
+    'WV',
+    'WY',
+]
+
+conus = 'CONUS'
+
+rto_iso_regions = ['CAISO', 'ERCOT', 'ISONE', 'MISO', 'NYISO', 'PJM', 'SPP']

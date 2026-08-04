@@ -1,0 +1,34 @@
+This directory contains station metadata distributed by the National Oceanic
+and Atmospheric Administration (NOAA) through the Meteorological Assimilation
+Data Ingest System (MADIS).
+
+This product uses MADIS data but is not endorsed or certified by NOAA, the
+National Weather Service, or any MADIS data provider. The data are not covered
+by the software license of this package.
+
+Dataset:
+
+  MADIS public station table
+
+  public_stntbl.csv
+
+Source:
+
+  https://madis-data.ncep.noaa.gov/madisPublic1/data/stations/public_stntbl.csv,
+  accessed August 2026
+
+This file is publicly distributed by NOAA. MADIS incorporates information from
+NOAA and non-NOAA observing networks, and some provider data may be subject to
+use or redistribution restrictions. This package does not grant additional
+rights to the data.
+
+For more information, see the MADIS dataset restrictions and National Weather
+Service reuse policy:
+
+  https://madis.ncep.noaa.gov/madis_restrictions.shtml
+
+  https://www.weather.gov/disclaimer
+
+Attribution: NOAA National Weather Service, National Centers for Environmental
+Prediction Central Operations, Meteorological Assimilation Data Ingest System
+(August 2026)

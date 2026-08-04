@@ -8,13 +8,13 @@ set -euo pipefail
 # mode, replaces any existing Jupyter kernelspec with the project’s repository
 # name, registers the new kernel, and installs the project’s pre-commit hooks.
 # It is intended to be run from the generated project via:
-# 
+#
 # make setup-dev-env
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 cd "$PROJECT_ROOT"
 
-ENV_NAME="madis_data"
+ENV_NAME="madis-data"
 KERNEL_NAME="madis-data"
 ENV_FILE="environment.yml"
 

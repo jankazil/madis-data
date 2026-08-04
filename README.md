@@ -13,17 +13,19 @@
 -->
 ## Workflow (using API)
 
-The workflow is shown in the [HowTo](https://github.com/jankazil/madis-data/blob/main/notebooks/HowTo.ipynb) Jupyter notebook. The notebook
+The workflow is shown in the [HowTo](https://github.com/jankazil/madis-data/blob/main/notebooks/HowTo.ipynb) Jupyter notebook. The notebook performs the following tasks:
 
-1. downloads MESONET surface observations data files for January 2026 from the MADIS archive,
-2. extracts data for stations in the state of Colorado of the following variables:
+1. download MESONET surface observations data files for January 2026 from the [MADIS archive](https://madis-data.ncep.noaa.gov/madisPublic1/data/archive/),
+2. extract January 2026 time series for stations in the state of Colorado of the following variables:
     - 2 m temperature,
     - 2 m dewpoint temperature,
     - 10 m west-east and south-north wind speed,
     - solar radiation,
-3. interpolates them to full-hourly time series,
-4. plots the original and the interpolated time series at an individual station over select time intervals,
-5. plots the stations in the state of Colorado on a US map.
+3. save the time series in a netCDF file,
+4. interpolate the time series to full-hourly time series,
+5. save the full-hourly time series in a netCDF file,
+6. plot the original and the full-hourly interpolated time series at an individual station over select time intervals,
+7. plot the stations in the state of Colorado on a US map.
 
 ### Requirements
 This notebook requires the Jupyter kernel madis-data, which is automaticaly installed as part of the madis-data conda development environment. The conda development environment can be installed from the root directory of the madis-data distribution with

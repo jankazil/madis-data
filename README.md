@@ -5,7 +5,7 @@
 - 2 m temperature
 - 2 m dewpoint temperature
 - 10 m west-east and south-north wind speed
-- Solar radiation
+- solar radiation
 <!--
 ## Overview
 

@@ -1,17 +1,43 @@
-name: madis_data
+name: madis-data
+
 channels:
   - conda-forge
+
 dependencies:
-  - python=3.12
+  # Python
+  - python>=3.12
   - pip
-  - pipreqs
-  - pre-commit
-  - ruff
-  - mypy
   - mamba
+
+  # Build tooling
+  - setuptools>=77
+  - wheel
+
+  # Runtime dependencies
+  - cartopy
+  - dask
+  - h5netcdf
+  - geopandas
+  - matplotlib
+  - numpy
+  - netcdf4
+  - pandas
+  - python-dateutil
+  - requests
+  - shapely
+  - timezonefinder
+  - tqdm
+  - xarray
+
+  # Jupyter support
   - jupyter_client
   - jupyter_core
   - notebook
   - ipykernel
-#  - pip:
-#      - git+https://github.com/jankazil/madis-data
+  - ipywidgets
+
+  # Development tooling, kept here because setup-dev-env.sh installs .[dev] with --no-deps.
+  - pytest
+  - pytest-cov
+  - ruff
+  - pre-commit

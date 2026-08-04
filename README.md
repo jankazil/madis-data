@@ -65,6 +65,12 @@ mamba install -c jan.kazil -c conda-forge madis-data
 - `make type` - Currently disabled. Intended to run `mypy` using the settings in `pyproject.toml`.
 - `make test` - Runs `pytest` with the test settings configured in `pyproject.toml`.
 
+## Disclaimers
+
+The data accessed by this software are publicly available from NOAA's National Centers for Environmental Prediction (NCEP) and are subject to their terms of use. This project is not affiliated with or endorsed by NOAA.
+
+This software uses U.S. Census Bureau and U.S. Energy Information Administration data, but is neither endorsed nor certified by the U.S. Census Bureau or the U.S. Energy Information Administration.
+
 ## Author
 
 Jan Kazil - jan.kazil.dev@gmail.com - [github.com/jankazil/madis-data](https://github.com/jankazil/madis-data)

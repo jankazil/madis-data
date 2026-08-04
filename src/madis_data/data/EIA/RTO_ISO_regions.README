@@ -1,7 +1,7 @@
 This directory contains data from the U.S. Energy Information Administration (EIA).
 
 This product uses EIA data but is not endorsed or certified by EIA,
-and EIA data are not covered by the license of the lcd-data package.
+and EIA data are not covered by the license of the madis-data package.
 
 Dataset:
 

@@ -1,11 +1,11 @@
 '''
 Catalogue-first regional filtering for record-oriented MADIS Mesonet files.
 
-The implementation identifies distinct locations reported under each station
-identifier. It uses two explicit phases:
+The implementation identifies stations whose reported locations change beyond
+selected thresholds. It uses two explicit phases:
 
 1. Scan station metadata in every file and build one location-aware catalogue.
-2. Select regional station locations once, then extract their records from every file.
+2. Ignore changed stations, select stable regional stations, and extract their records.
 
 By default, the first phase retains compact integer station-location codes for
 every record. This avoids decoding stationId and rereading coordinates during
@@ -52,11 +52,11 @@ def filter_by_region(
     Filter MADIS files using a global station catalogue and regional table.
 
     The first pass builds a catalogue of unique station locations across all
-    files. Stations reported at multiple locations are renamed with ``_1``,
-    ``_2``, and subsequent suffixes in first-encounter order. One bounding-box
-    and exact polygon test then produces the regional station table. The second
-    pass selects every record belonging to those station locations, and per-file
-    results are concatenated in input order.
+    files. Stations reported at multiple locations are printed with their
+    coordinates and excluded completely. One bounding-box and exact polygon
+    test then produces the regional station table. The second pass selects every
+    record belonging to stable regional stations, and per-file results are
+    concatenated in input order.
 
     Parameters
     ----------
@@ -83,10 +83,11 @@ def filter_by_region(
         displayed.
     latitude_change_threshold_deg, longitude_change_threshold_deg
         Maximum coordinate differences, in degrees, assigned to one station
-        location. A larger difference creates a new station location.
+        location. A larger difference causes the station to be excluded.
     elevation_change_threshold_m
         Maximum elevation difference, in meters, assigned to one station
-        location when both elevations are finite.
+        location when both elevations are finite. A larger difference causes
+        the station to be excluded.
 
     Returns
     -------
@@ -157,8 +158,43 @@ def filter_by_region(
         # Preserve the per-file index in input order.
         file_indices.append(file_index)
 
-    # Construct final public names after every location of each station is known.
-    location_names = _build_station_location_names(location_catalogue)
+    # Compile stations whose coordinates exceed the selected change thresholds.
+    changed_station_coordinates: dict[str, list[tuple[float, float, float]]] = {
+        station_id: [
+            (
+                location_catalogue.locations[location_code].latitude,
+                location_catalogue.locations[location_code].longitude,
+                location_catalogue.locations[location_code].elevation,
+            )
+            for location_code in location_codes
+        ]
+        for station_id, location_codes in location_catalogue.codes_by_station.items()
+        if len(location_codes) > 1
+    }
+
+    if changed_station_coordinates:
+        # Report ambiguous actual or spurious station-location changes on standard output.
+        print(
+            'The coordinates of the following stations change by more than the selected '
+            'thresholds. This may represent an actual or a spurious change in station '
+            'location. These stations are ignored. Coordinates are listed as '
+            '(latitude, longitude, elevation):'
+        )
+        for station_id, coordinates in changed_station_coordinates.items():
+            print(f'{station_id}: {coordinates}')
+
+    # Collect every catalogue location belonging to a changed station.
+    ignored_location_codes = {
+        location_code
+        for station_id in changed_station_coordinates
+        for location_code in location_catalogue.codes_by_station[station_id]
+    }
+
+    # Construct output names after every location of each station is known.
+    location_names = _build_station_location_names(
+        location_catalogue,
+        ignored_station_ids=set(changed_station_coordinates),
+    )
     # Identify locations for which records with missing elevation are ambiguous.
     elevation_ambiguous = _find_elevation_ambiguous_locations(
         location_catalogue,
@@ -176,7 +212,9 @@ def filter_by_region(
 
     # Construct the public catalogue used by the regional geometry test.
     station_catalogue = {
-        str(location_names[location_code]): location for location_code, location in enumerate(location_catalogue.locations)
+        str(location_names[location_code]): location
+        for location_code, location in enumerate(location_catalogue.locations)
+        if location_code not in ignored_location_codes
     }
 
     # Apply bounding-box and exact polygon tests to unique stations only.
@@ -543,8 +581,8 @@ def _compact_station_codes(station_codes: np.ndarray) -> np.ndarray:
     '''
     Store station codes using the smallest practical signed integer type.
 
-    Approximately 30,000 station locations fit in int16, reducing the retained
-    index to two bytes per record while preserving negative provisional codes.
+    The main benefit is lower memory use - typically 2 instead of 8 bytes
+    per record.
 
     Parameters
     ----------
@@ -577,27 +615,20 @@ def _compact_station_codes(station_codes: np.ndarray) -> np.ndarray:
 
 def _build_station_location_names(
     location_catalogue: _StationLocationCatalogue,
+    *,
+    ignored_station_ids: set[str],
 ) -> np.ndarray:
-    '''Construct unique public names for every station location.'''
+    '''Construct public names while leaving ignored stations unnamed.'''
 
     # Allocate names in global location-code order.
     location_names = np.empty(len(location_catalogue.locations), dtype=object)
-    assigned_names: set[str] = set()
 
     for station_id, location_codes in location_catalogue.codes_by_station.items():
-        split_station = len(location_codes) > 1
+        # Retain empty internal names for stations that cannot enter the result.
+        location_name = '' if station_id in ignored_station_ids else station_id
+        location_names[np.asarray(location_codes, dtype=np.intp)] = location_name
 
-        for location_number, location_code in enumerate(location_codes, start=1):
-            location_name = f'{station_id}_{location_number}' if split_station else station_id
-
-            # Reject a generated name that would merge two unrelated stations.
-            if location_name in assigned_names:
-                raise ValueError(f'Station-location name collision for {location_name!r}.')
-
-            location_names[location_code] = location_name
-            assigned_names.add(location_name)
-
-    # Use one fixed-width Unicode array for vectorized record renaming.
+    # Use one fixed-width Unicode array for vectorized record mapping.
     return np.asarray(location_names.tolist(), dtype=str)
 
 

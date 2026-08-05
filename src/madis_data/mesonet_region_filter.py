@@ -1,16 +1,19 @@
 '''
-Catalogue-first regional filtering for record-oriented MADIS Mesonet files.
+Functionality to extract data filtered by region or station from MADIS Mesonet files.
 
 The implementation identifies stations whose reported locations change beyond
-selected thresholds. It uses two explicit phases:
+selected thresholds. ``filter_by_region`` uses two explicit phases:
 
 1. Scan station metadata in every file and build one location-aware catalogue.
 2. Ignore changed stations, select stable regional stations, and extract their records.
 
-By default, the first phase retains compact integer station-location codes for
-every record. This avoids decoding stationId and rereading coordinates during
-extraction. Set retain_record_index=False if that memory/performance tradeoff
-is undesirable.
+``filter_by_id`` instead extracts one requested station. If its location changes
+beyond the thresholds, the station is retained with mean distinct coordinates
+and a global warning attribute.
+
+By default, the first phase retains a compact record index. This avoids decoding
+stationId and rereading coordinates during extraction. Set
+retain_record_index=False if that memory/performance tradeoff is undesirable.
 
 When load_selected=True, each complete input file is loaded sequentially before
 regional records are selected in memory. For the tested MADIS files, this is
@@ -34,6 +37,274 @@ from madis_data.mesonet import mesonet_station_ids2strings
 STATION_LATITUDE_CHANGE_THRESHOLD_DEG = 0.01
 STATION_LONGITUDE_CHANGE_THRESHOLD_DEG = 0.01
 STATION_ELEVATION_CHANGE_THRESHOLD_M = 25.0
+STATION_COORDINATE_WARNING = (
+    'The coordinates (latitude, longitude, elevation) of this station vary in the original '
+    'MADIS dataset, which may reflect an actual or spurious change in station location; the '
+    'given coordinates are the mean of the distinct coordinate values encountered.'
+)
+
+
+def filter_by_id(
+    madis_mesonet_files: list[Path],
+    station_id: str,
+    n_jobs: int = 1,
+    *,
+    retain_record_index: bool = True,
+    load_selected: bool = True,
+    show_progress: bool = True,
+    latitude_change_threshold_deg: float = STATION_LATITUDE_CHANGE_THRESHOLD_DEG,
+    longitude_change_threshold_deg: float = STATION_LONGITUDE_CHANGE_THRESHOLD_DEG,
+    elevation_change_threshold_m: float = STATION_ELEVATION_CHANGE_THRESHOLD_M,
+) -> xr.Dataset:
+    '''
+    Extract one station from MADIS Mesonet files.
+
+    The first pass identifies records belonging to the requested station and
+    checks its coordinates across all files. A station whose coordinates exceed
+    the selected change thresholds is retained. Its output coordinates are the
+    mean of the distinct coordinate sets encountered, and the output receives a
+    ``COORDINATE_WARNING`` global attribute.
+
+    Parameters
+    ----------
+    madis_mesonet_files
+        Paths of source MADIS Mesonet netCDF files.
+    station_id
+        Exact decoded station identifier to extract.
+    n_jobs
+        Number of extraction threads. The metadata pass remains ordered and
+        sequential.
+    retain_record_index
+        Whether to retain selected record positions between passes.
+    load_selected
+        If True, load each complete source file sequentially before selecting
+        the station records and close the source immediately. If False, return
+        lazy selected arrays and retain source files until the result is closed.
+    show_progress
+        Whether to display progress bars for the metadata and extraction passes.
+    latitude_change_threshold_deg, longitude_change_threshold_deg
+        Maximum coordinate differences, in degrees, assigned to one station
+        location.
+    elevation_change_threshold_m
+        Maximum elevation difference, in meters, assigned to one station
+        location when both elevations are finite.
+
+    Returns
+    -------
+    station_ds
+        Dataset containing records for the requested station concatenated in
+        chronologic order and station metadata along the ``station`` dimension.
+
+    Raises
+    ------
+    ValueError
+        If no files are supplied, ``n_jobs`` is invalid, thresholds are invalid,
+        or input files use inconsistent record dimensions.
+    '''
+
+    # Reject an empty source-file sequence before scanning station metadata.
+    if not madis_mesonet_files:
+        raise ValueError('No MADIS Mesonet files were provided.')
+
+    # Reject nonpositive worker counts before creating an executor.
+    if n_jobs < 1:
+        raise ValueError('n_jobs must be at least 1.')
+
+    # Reject invalid station-location thresholds before reading source files.
+    location_thresholds = (
+        latitude_change_threshold_deg,
+        longitude_change_threshold_deg,
+        elevation_change_threshold_m,
+    )
+    if not all(np.isfinite(threshold) and threshold >= 0 for threshold in location_thresholds):
+        raise ValueError('Station-location thresholds must be finite and nonnegative.')
+
+    # Normalize all supplied path-like values to Path objects.
+    madis_mesonet_files = [Path(path) for path in madis_mesonet_files]
+    # Count files once for progress reporting.
+    file_count = len(madis_mesonet_files)
+
+    # Initialize the ordered per-file station indexes.
+    file_indices: list[_FileStationIdIndex] = []
+    # Track threshold-separated locations using the regional filter's rules.
+    location_catalogue = _StationLocationCatalogue(locations=[], codes_by_station={})
+    # Retain every exact usable coordinate set once for a possible changed-station mean.
+    distinct_coordinates: set[tuple[float, float, float | None]] = set()
+
+    # Add progress reporting around the ordered file sequence.
+    metadata_paths = progress.iterate_with_progress(
+        madis_mesonet_files,
+        total=file_count,
+        description='Scanning station metadata',
+        units='files',
+        enabled=show_progress,
+    )
+
+    # Scan every file in input order to identify target records and coordinate changes.
+    for path in metadata_paths:
+        file_index = _scan_file_station_id_metadata(
+            path,
+            station_id=station_id,
+            location_catalogue=location_catalogue,
+            distinct_coordinates=distinct_coordinates,
+            retain_record_index=retain_record_index,
+            latitude_change_threshold_deg=latitude_change_threshold_deg,
+            longitude_change_threshold_deg=longitude_change_threshold_deg,
+            elevation_change_threshold_m=elevation_change_threshold_m,
+        )
+        file_indices.append(file_index)
+
+    # Determine whether the station occupies more than one threshold-separated location.
+    location_codes = location_catalogue.codes_by_station.get(station_id, [])
+    coordinates_changed = len(location_codes) > 1
+
+    # Construct one output station record when usable coordinates were encountered.
+    if location_codes:
+        if coordinates_changed:
+            # Average coordinate sets without weighting frequently reported values more heavily.
+            coordinate_values = np.asarray(
+                [
+                    (latitude, longitude, np.nan if elevation is None else elevation)
+                    for latitude, longitude, elevation in distinct_coordinates
+                ],
+                dtype=np.float64,
+            )
+            latitude = float(coordinate_values[:, 0].mean())
+            longitude = float(coordinate_values[:, 1].mean())
+            finite_elevations = coordinate_values[np.isfinite(coordinate_values[:, 2]), 2]
+            elevation = float(finite_elevations.mean()) if finite_elevations.size else np.nan
+        else:
+            # Match the regional filter by using the single representative location.
+            location = location_catalogue.locations[location_codes[0]]
+            latitude = location.latitude
+            longitude = location.longitude
+            elevation = location.elevation
+
+        station_table = pd.DataFrame(
+            {
+                'stationId': [station_id],
+                'longitude': [longitude],
+                'latitude': [latitude],
+                'elevation': [elevation],
+            }
+        )
+    else:
+        # Preserve the station metadata schema when the requested identifier is absent.
+        station_table = pd.DataFrame(columns=['stationId', 'longitude', 'latitude', 'elevation'])
+
+    def extract_file(file_index: _FileStationIdIndex) -> _FilteredFile:
+        '''Extract the requested station from one indexed source file.'''
+
+        # Apply the shared identifier to one indexed file.
+        return _extract_station_id_from_file(
+            file_index,
+            station_id=station_id,
+            load_selected=load_selected,
+        )
+
+    # Avoid executor overhead when only one worker is requested.
+    if n_jobs == 1:
+        filtered_files: list[_FilteredFile] = []
+        extraction_succeeded = False
+        try:
+            extraction_results = (extract_file(file_index) for file_index in file_indices)
+            for result in progress.iterate_with_progress(
+                extraction_results,
+                total=file_count,
+                description='Extracting station data',
+                units='files',
+                enabled=show_progress,
+            ):
+                filtered_files.append(result)
+            extraction_succeeded = True
+        finally:
+            if not load_selected and not extraction_succeeded:
+                _close_datasets(tuple(result.dataset for result in filtered_files))
+    else:
+        # Import completion-order iteration locally for the concurrent path.
+        from concurrent.futures import as_completed
+
+        # Store completed results by input position for ordered concatenation.
+        filtered_files_by_position: dict[int, _FilteredFile] = {}
+        future_positions = {}
+        extraction_succeeded = False
+        try:
+            with ThreadPoolExecutor(max_workers=n_jobs) as executor:
+                future_positions = {
+                    executor.submit(extract_file, file_index): position for position, file_index in enumerate(file_indices)
+                }
+                completed_futures = as_completed(future_positions)
+                for future in progress.iterate_with_progress(
+                    completed_futures,
+                    total=file_count,
+                    description='Extracting station data',
+                    units='files',
+                    enabled=show_progress,
+                ):
+                    position = future_positions[future]
+                    filtered_files_by_position[position] = future.result()
+
+            # Restore input order before validation and concatenation.
+            filtered_files = [filtered_files_by_position[position] for position in range(file_count)]
+            extraction_succeeded = True
+        finally:
+            if not load_selected and not extraction_succeeded:
+                datasets_to_close = {id(result.dataset): result.dataset for result in filtered_files_by_position.values()}
+                for future in future_positions:
+                    if future.done() and not future.cancelled() and future.exception() is None:
+                        result = future.result()
+                        datasets_to_close[id(result.dataset)] = result.dataset
+                _close_datasets(tuple(datasets_to_close.values()))
+
+    # Require all extracted files to use one common record dimension.
+    record_dimensions = {result.record_dimension for result in filtered_files}
+    if len(record_dimensions) != 1:
+        if not load_selected:
+            _close_datasets(tuple(result.dataset for result in filtered_files))
+        dimensions_message = sorted(record_dimensions)
+        raise ValueError(f'Input files do not use one consistent record dimension: {dimensions_message!r}.')
+
+    # Concatenate record variables without unnecessary payload comparison.
+    record_dimension = filtered_files[0].record_dimension
+    source_datasets = tuple(result.dataset for result in filtered_files)
+    concatenation_succeeded = False
+    try:
+        station_ds = xr.concat(
+            source_datasets,
+            dim=record_dimension,
+            data_vars='minimal',
+            coords='minimal',
+            compat='override',
+            join='exact',
+            combine_attrs='override',
+        )
+        # Order the data chronologically
+        station_ds = station_ds.sortby('time')
+        concatenation_succeeded = True
+    finally:
+        if not load_selected and not concatenation_succeeded:
+            _close_datasets(source_datasets)
+
+    result_succeeded = False
+    try:
+        # Attach provenance, station metadata, and any coordinate warning.
+        station_ds = _attach_station_id_metadata(
+            station_ds,
+            file_indices=file_indices,
+            source_datasets=source_datasets,
+            station_table=station_table,
+            coordinates_changed=coordinates_changed,
+        )
+
+        if not load_selected:
+            # Ensure that station_ds.close() releases all underlying input files.
+            station_ds.set_close(partial(_close_datasets, source_datasets))
+
+        result_succeeded = True
+        return station_ds
+    finally:
+        if not load_selected and not result_succeeded:
+            _close_datasets(source_datasets)
 
 
 def filter_by_region(
@@ -471,6 +742,18 @@ class _FileStationIndex:
 
 
 @dataclass
+class _FileStationIdIndex:
+    '''Store selected record positions for one station in one input file.'''
+
+    # Retain the input file path.
+    path: Path
+    # Retain the record dimension name.
+    record_dimension: str
+    # Optionally retain the selected record positions for the extraction pass.
+    record_positions: np.ndarray | None
+
+
+@dataclass
 class _FilteredFile:
     '''
     Store the regional subset extracted from one input file.
@@ -492,195 +775,6 @@ class _FilteredFile:
 '''
 Internal helper functions
 '''
-
-
-def _attach_region_metadata(
-    region_ds: xr.Dataset,
-    *,
-    file_indices: list['_FileStationIndex'],
-    source_datasets: tuple[xr.Dataset, ...],
-    region_station_table: pd.DataFrame,
-    region_code: str,
-) -> xr.Dataset:
-    '''Attach source provenance and usable regional station metadata.'''
-
-    # Collect source provenance in input-file order before overriding attributes.
-    files_orig: list[str] = []
-    for file_index, source_dataset in zip(file_indices, source_datasets, strict=True):
-        file_orig = source_dataset.attrs.get('file_orig')
-        if file_orig is not None:
-            files_orig.append(str(file_orig))
-            continue
-
-        inherited_files = source_dataset.attrs.get('files_orig')
-        if inherited_files is not None:
-            if isinstance(inherited_files, str):
-                files_orig.append(inherited_files)
-            else:
-                files_orig.extend(str(path) for path in inherited_files)
-            continue
-
-        files_orig.append(str(file_index.path))
-
-    # Preserve the selected region and complete ordered provenance.
-    region_ds.attrs['region'] = region_code
-    region_ds.attrs.pop('file_orig', None)
-    region_ds.attrs['files_orig'] = files_orig
-
-    # Require finite coordinates while retaining stations with missing elevation.
-    usable_location = np.isfinite(region_station_table['longitude'].to_numpy()) & np.isfinite(
-        region_station_table['latitude'].to_numpy()
-    )
-    # Reject stations and their records when no usable location is available.
-    station_records = region_station_table.loc[usable_location].copy()
-
-    # Convert sorted station identifiers to the public list.
-    station_ids = station_records['stationId'].tolist()
-    # Construct the station-to-latitude mapping.
-    latitudes = dict(zip(station_records['stationId'], station_records['latitude'], strict=True))
-    # Construct the station-to-longitude mapping.
-    longitudes = dict(zip(station_records['stationId'], station_records['longitude'], strict=True))
-    # Construct the station-to-elevation mapping.
-    elevations = dict(zip(station_records['stationId'], station_records['elevation'], strict=True))
-
-    # Store usable station metadata in station-identifier order.
-    region_ds['stationID'] = ('station', np.asarray(station_ids, dtype=str))
-    region_ds['latitude'] = (
-        'station',
-        np.asarray([latitudes[station_id] for station_id in station_ids], dtype=np.float32),
-    )
-    region_ds['longitude'] = (
-        'station',
-        np.asarray([longitudes[station_id] for station_id in station_ids], dtype=np.float32),
-    )
-    region_ds['elevation'] = (
-        'station',
-        np.asarray([elevations[station_id] for station_id in station_ids], dtype=np.float32),
-    )
-
-    return region_ds
-
-
-def _close_datasets(datasets: tuple[xr.Dataset, ...]) -> None:
-    '''
-    Close every source dataset retained by a lazy concatenated result.
-
-    Parameters
-    ----------
-    datasets
-        Source datasets whose netCDF file handles must be released.
-    '''
-
-    # Close every source independently.
-    for dataset in datasets:
-        # Release the source dataset's backend resources.
-        dataset.close()
-
-
-def _compact_station_codes(station_codes: np.ndarray) -> np.ndarray:
-    '''
-    Store station codes using the smallest practical signed integer type.
-
-    The main benefit is lower memory use - typically 2 instead of 8 bytes
-    per record.
-
-    Parameters
-    ----------
-    station_codes
-        Local station code for every record.
-
-    Returns
-    -------
-    numpy.ndarray
-        Codes converted to int16, int32, or int64 as required.
-    '''
-
-    # Determine the code range, or -1 for an empty array.
-    minimum_code = int(station_codes.min()) if station_codes.size else -1
-    maximum_code = int(station_codes.max()) if station_codes.size else -1
-
-    # Use two-byte codes when the station count permits.
-    if minimum_code >= np.iinfo(np.int16).min and maximum_code <= np.iinfo(np.int16).max:
-        # Convert without copying when the source already has the target type.
-        return station_codes.astype(np.int16, copy=False)
-
-    # Use four-byte codes for larger station catalogues.
-    if minimum_code >= np.iinfo(np.int32).min and maximum_code <= np.iinfo(np.int32).max:
-        # Convert without copying when the source already has the target type.
-        return station_codes.astype(np.int32, copy=False)
-
-    # Retain eight-byte codes only for exceptionally large catalogues.
-    return station_codes.astype(np.int64, copy=False)
-
-
-def _build_station_location_names(
-    location_catalogue: _StationLocationCatalogue,
-    *,
-    ignored_station_ids: set[str],
-) -> np.ndarray:
-    '''Construct public names while leaving ignored stations unnamed.'''
-
-    # Allocate names in global location-code order.
-    location_names = np.empty(len(location_catalogue.locations), dtype=object)
-
-    for station_id, location_codes in location_catalogue.codes_by_station.items():
-        # Retain empty internal names for stations that cannot enter the result.
-        location_name = '' if station_id in ignored_station_ids else station_id
-        location_names[np.asarray(location_codes, dtype=np.intp)] = location_name
-
-    # Use one fixed-width Unicode array for vectorized record mapping.
-    return np.asarray(location_names.tolist(), dtype=str)
-
-
-def _find_elevation_ambiguous_locations(
-    location_catalogue: _StationLocationCatalogue,
-    *,
-    latitude_change_threshold_deg: float,
-    longitude_change_threshold_deg: float,
-) -> np.ndarray:
-    '''Identify locations that require elevation to distinguish them.'''
-
-    # Initialize every location as horizontally unambiguous.
-    elevation_ambiguous = np.zeros(len(location_catalogue.locations), dtype=bool)
-
-    for location_codes in location_catalogue.codes_by_station.values():
-        if len(location_codes) < 2:
-            continue
-
-        latitudes = np.asarray([location_catalogue.locations[code].latitude for code in location_codes])
-        longitudes = np.asarray([location_catalogue.locations[code].longitude for code in location_codes])
-
-        # Find distinct locations whose horizontal tolerance regions overlap.
-        horizontal_overlap = (np.abs(latitudes[:, np.newaxis] - latitudes) <= latitude_change_threshold_deg) & (
-            np.abs(longitudes[:, np.newaxis] - longitudes) <= longitude_change_threshold_deg
-        )
-        np.fill_diagonal(horizontal_overlap, False)
-        elevation_ambiguous[np.asarray(location_codes)] = horizontal_overlap.any(axis=1)
-
-    return elevation_ambiguous
-
-
-def _finalize_record_location_codes(
-    record_location_codes: np.ndarray,
-    elevation_ambiguous: np.ndarray,
-) -> np.ndarray:
-    '''Resolve provisional codes used for records with missing elevation.'''
-
-    # Copy before replacing provisional negative codes.
-    finalized_codes = record_location_codes.copy()
-    provisional_positions = np.flatnonzero(finalized_codes < -1)
-
-    if provisional_positions.size:
-        # Decode provisional code ``-(location_code + 2)`` using a safe wide type.
-        location_codes = -finalized_codes[provisional_positions].astype(np.int64) - 2
-        usable_location = ~elevation_ambiguous[location_codes]
-        finalized_codes[provisional_positions] = np.where(
-            usable_location,
-            location_codes,
-            -1,
-        )
-
-    return _compact_station_codes(finalized_codes)
 
 
 def _assign_changed_station_records(
@@ -770,6 +864,73 @@ def _assign_changed_station_records(
             )
         )
         location_codes.append(location_code)
+
+
+def _attach_region_metadata(
+    region_ds: xr.Dataset,
+    *,
+    file_indices: list['_FileStationIndex'],
+    source_datasets: tuple[xr.Dataset, ...],
+    region_station_table: pd.DataFrame,
+    region_code: str,
+) -> xr.Dataset:
+    '''Attach source provenance and usable regional station metadata.'''
+
+    # Collect source provenance in input-file order before overriding attributes.
+    files_orig: list[str] = []
+    for file_index, source_dataset in zip(file_indices, source_datasets, strict=True):
+        file_orig = source_dataset.attrs.get('file_orig')
+        if file_orig is not None:
+            files_orig.append(str(file_orig))
+            continue
+
+        inherited_files = source_dataset.attrs.get('files_orig')
+        if inherited_files is not None:
+            if isinstance(inherited_files, str):
+                files_orig.append(inherited_files)
+            else:
+                files_orig.extend(str(path) for path in inherited_files)
+            continue
+
+        files_orig.append(str(file_index.path))
+
+    # Preserve the selected region and complete ordered provenance.
+    region_ds.attrs['region'] = region_code
+    region_ds.attrs.pop('file_orig', None)
+    region_ds.attrs['files_orig'] = files_orig
+
+    # Require finite coordinates while retaining stations with missing elevation.
+    usable_location = np.isfinite(region_station_table['longitude'].to_numpy()) & np.isfinite(
+        region_station_table['latitude'].to_numpy()
+    )
+    # Reject stations and their records when no usable location is available.
+    station_records = region_station_table.loc[usable_location].copy()
+
+    # Convert sorted station identifiers to the public list.
+    station_ids = station_records['stationId'].tolist()
+    # Construct the station-to-latitude mapping.
+    latitudes = dict(zip(station_records['stationId'], station_records['latitude'], strict=True))
+    # Construct the station-to-longitude mapping.
+    longitudes = dict(zip(station_records['stationId'], station_records['longitude'], strict=True))
+    # Construct the station-to-elevation mapping.
+    elevations = dict(zip(station_records['stationId'], station_records['elevation'], strict=True))
+
+    # Store usable station metadata in station-identifier order.
+    region_ds['stationID'] = ('station', np.asarray(station_ids, dtype=str))
+    region_ds['latitude'] = (
+        'station',
+        np.asarray([latitudes[station_id] for station_id in station_ids], dtype=np.float32),
+    )
+    region_ds['longitude'] = (
+        'station',
+        np.asarray([longitudes[station_id] for station_id in station_ids], dtype=np.float32),
+    )
+    region_ds['elevation'] = (
+        'station',
+        np.asarray([elevations[station_id] for station_id in station_ids], dtype=np.float32),
+    )
+
+    return region_ds
 
 
 def _assign_station_location_codes(
@@ -927,6 +1088,125 @@ def _assign_station_location_codes(
     return record_location_codes
 
 
+def _attach_station_id_metadata(
+    station_ds: xr.Dataset,
+    *,
+    file_indices: list['_FileStationIdIndex'],
+    source_datasets: tuple[xr.Dataset, ...],
+    station_table: pd.DataFrame,
+    coordinates_changed: bool,
+) -> xr.Dataset:
+    '''Attach source provenance and metadata for one requested station.'''
+
+    # Collect source provenance in input-file order before overriding attributes.
+    files_orig: list[str] = []
+    for file_index, source_dataset in zip(file_indices, source_datasets, strict=True):
+        file_orig = source_dataset.attrs.get('file_orig')
+        if file_orig is not None:
+            files_orig.append(str(file_orig))
+            continue
+
+        inherited_files = source_dataset.attrs.get('files_orig')
+        if inherited_files is not None:
+            if isinstance(inherited_files, str):
+                files_orig.append(inherited_files)
+            else:
+                files_orig.extend(str(path) for path in inherited_files)
+            continue
+
+        files_orig.append(str(file_index.path))
+
+    # Preserve complete ordered provenance without the obsolete singular attribute.
+    station_ds.attrs.pop('file_orig', None)
+    station_ds.attrs['files_orig'] = files_orig
+
+    # Add the warning only when coordinates exceed at least one selected threshold.
+    if coordinates_changed:
+        station_ds.attrs['COORDINATE_WARNING'] = STATION_COORDINATE_WARNING
+    else:
+        station_ds.attrs.pop('COORDINATE_WARNING', None)
+
+    # Convert the station table to the same public metadata structure as the regional filter.
+    station_ids = station_table['stationId'].tolist()
+    station_ds['stationID'] = ('station', np.asarray(station_ids, dtype=str))
+    station_ds['latitude'] = ('station', station_table['latitude'].to_numpy(dtype=np.float32))
+    station_ds['longitude'] = ('station', station_table['longitude'].to_numpy(dtype=np.float32))
+    station_ds['elevation'] = ('station', station_table['elevation'].to_numpy(dtype=np.float32))
+
+    return station_ds
+
+
+def _build_station_location_names(
+    location_catalogue: _StationLocationCatalogue,
+    *,
+    ignored_station_ids: set[str],
+) -> np.ndarray:
+    '''Construct public names while leaving ignored stations unnamed.'''
+
+    # Allocate names in global location-code order.
+    location_names = np.empty(len(location_catalogue.locations), dtype=object)
+
+    for station_id, location_codes in location_catalogue.codes_by_station.items():
+        # Retain empty internal names for stations that cannot enter the result.
+        location_name = '' if station_id in ignored_station_ids else station_id
+        location_names[np.asarray(location_codes, dtype=np.intp)] = location_name
+
+    # Use one fixed-width Unicode array for vectorized record mapping.
+    return np.asarray(location_names.tolist(), dtype=str)
+
+
+def _close_datasets(datasets: tuple[xr.Dataset, ...]) -> None:
+    '''
+    Close every source dataset retained by a lazy concatenated result.
+
+    Parameters
+    ----------
+    datasets
+        Source datasets whose netCDF file handles must be released.
+    '''
+
+    # Close every source independently.
+    for dataset in datasets:
+        # Release the source dataset's backend resources.
+        dataset.close()
+
+
+def _compact_station_codes(station_codes: np.ndarray) -> np.ndarray:
+    '''
+    Store station codes using the smallest practical signed integer type.
+
+    The main benefit is lower memory use - typically 2 instead of 8 bytes
+    per record.
+
+    Parameters
+    ----------
+    station_codes
+        Local station code for every record.
+
+    Returns
+    -------
+    numpy.ndarray
+        Codes converted to int16, int32, or int64 as required.
+    '''
+
+    # Determine the code range, or -1 for an empty array.
+    minimum_code = int(station_codes.min()) if station_codes.size else -1
+    maximum_code = int(station_codes.max()) if station_codes.size else -1
+
+    # Use two-byte codes when the station count permits.
+    if minimum_code >= np.iinfo(np.int16).min and maximum_code <= np.iinfo(np.int16).max:
+        # Convert without copying when the source already has the target type.
+        return station_codes.astype(np.int16, copy=False)
+
+    # Use four-byte codes for larger station catalogues.
+    if minimum_code >= np.iinfo(np.int32).min and maximum_code <= np.iinfo(np.int32).max:
+        # Convert without copying when the source already has the target type.
+        return station_codes.astype(np.int32, copy=False)
+
+    # Retain eight-byte codes only for exceptionally large catalogues.
+    return station_codes.astype(np.int64, copy=False)
+
+
 def _extract_region_from_file(
     file_index: _FileStationIndex,
     *,
@@ -1061,6 +1341,65 @@ def _extract_region_from_file(
     )
 
 
+def _extract_station_id_from_file(
+    file_index: _FileStationIdIndex,
+    *,
+    station_id: str,
+    load_selected: bool,
+) -> _FilteredFile:
+    '''Extract records for one station from one indexed source file.'''
+
+    # Open the source without constructing unnecessary default indexes.
+    ds = xr.open_dataset(
+        file_index.path,
+        create_default_indexes=False,
+    )
+
+    extraction_succeeded = False
+    try:
+        # Reconstruct target positions only when low-memory mode omitted them.
+        if file_index.record_positions is None:
+            station_id_variable = ds['stationId'].load()
+            if station_id_variable.dims != (file_index.record_dimension,):
+                raise ValueError(f'Unexpected stationId dimensions in {file_index.path!s}.')
+
+            target_positions = _record_positions_for_station_id(station_id_variable, station_id)
+            if target_positions.size:
+                longitudes = _load_record_array(ds, 'longitude', file_index.record_dimension)
+                latitudes = _load_record_array(ds, 'latitude', file_index.record_dimension)
+                usable_location = np.isfinite(longitudes[target_positions]) & np.isfinite(latitudes[target_positions])
+                record_positions = target_positions[usable_location]
+            else:
+                record_positions = target_positions
+        else:
+            # Reuse retained positions in the normal fast mode.
+            record_positions = file_index.record_positions
+
+        # Load sequentially before indexing when an eager result is requested.
+        if load_selected:
+            ds.load()
+
+        # Select the requested station records, in memory after eager loading.
+        ds_out = ds.isel({file_index.record_dimension: record_positions})
+        # Replace source identifiers with the normalized requested identifier.
+        station_id_attrs = ds_out['stationId'].attrs.copy()
+        ds_out['stationId'] = (
+            file_index.record_dimension,
+            np.repeat(np.asarray([station_id], dtype=str), record_positions.size),
+        )
+        ds_out['stationId'].attrs = station_id_attrs
+        extraction_succeeded = True
+    finally:
+        if load_selected or not extraction_succeeded:
+            # Close eager sources and every source whose extraction failed.
+            ds.close()
+
+    return _FilteredFile(
+        dataset=ds_out,
+        record_dimension=file_index.record_dimension,
+    )
+
+
 def _factorize_station_ids(
     station_id_variable: xr.DataArray,
 ) -> tuple[np.ndarray, list[str]]:
@@ -1108,6 +1447,57 @@ def _factorize_station_ids(
         np.asarray(codes, dtype=np.intp),
         [str(value) for value in unique_ids],
     )
+
+
+def _finalize_record_location_codes(
+    record_location_codes: np.ndarray,
+    elevation_ambiguous: np.ndarray,
+) -> np.ndarray:
+    '''Resolve provisional codes used for records with missing elevation.'''
+
+    # Copy before replacing provisional negative codes.
+    finalized_codes = record_location_codes.copy()
+    provisional_positions = np.flatnonzero(finalized_codes < -1)
+
+    if provisional_positions.size:
+        # Decode provisional code ``-(location_code + 2)`` using a safe wide type.
+        location_codes = -finalized_codes[provisional_positions].astype(np.int64) - 2
+        usable_location = ~elevation_ambiguous[location_codes]
+        finalized_codes[provisional_positions] = np.where(
+            usable_location,
+            location_codes,
+            -1,
+        )
+
+    return _compact_station_codes(finalized_codes)
+
+
+def _find_elevation_ambiguous_locations(
+    location_catalogue: _StationLocationCatalogue,
+    *,
+    latitude_change_threshold_deg: float,
+    longitude_change_threshold_deg: float,
+) -> np.ndarray:
+    '''Identify locations that require elevation to distinguish them.'''
+
+    # Initialize every location as horizontally unambiguous.
+    elevation_ambiguous = np.zeros(len(location_catalogue.locations), dtype=bool)
+
+    for location_codes in location_catalogue.codes_by_station.values():
+        if len(location_codes) < 2:
+            continue
+
+        latitudes = np.asarray([location_catalogue.locations[code].latitude for code in location_codes])
+        longitudes = np.asarray([location_catalogue.locations[code].longitude for code in location_codes])
+
+        # Find distinct locations whose horizontal tolerance regions overlap.
+        horizontal_overlap = (np.abs(latitudes[:, np.newaxis] - latitudes) <= latitude_change_threshold_deg) & (
+            np.abs(longitudes[:, np.newaxis] - longitudes) <= longitude_change_threshold_deg
+        )
+        np.fill_diagonal(horizontal_overlap, False)
+        elevation_ambiguous[np.asarray(location_codes)] = horizontal_overlap.any(axis=1)
+
+    return elevation_ambiguous
 
 
 def _first_valid_record_by_station(
@@ -1300,6 +1690,108 @@ def _record_positions_for_region(
 
     # Return sorted integer positions rather than a record-sized Boolean index.
     return np.flatnonzero(record_mask)
+
+
+def _record_positions_for_station_id(
+    station_id_variable: xr.DataArray,
+    station_id: str,
+) -> np.ndarray:
+    '''Return record positions matching one decoded station identifier.'''
+
+    # Decode fixed-width MADIS identifiers once.
+    decoded = np.asarray(mesonet_station_ids2strings(station_id_variable))
+
+    # Validate the decoded array against the source record count.
+    if decoded.ndim != 1 or decoded.size != station_id_variable.size:
+        raise ValueError('Decoded station identifiers do not form one value per record.')
+
+    # Return sorted positions whose normalized identifier exactly matches the request.
+    return np.flatnonzero(decoded == station_id)
+
+
+def _scan_file_station_id_metadata(
+    madis_mesonet_file: Path,
+    *,
+    station_id: str,
+    location_catalogue: _StationLocationCatalogue,
+    distinct_coordinates: set[tuple[float, float, float | None]],
+    retain_record_index: bool,
+    latitude_change_threshold_deg: float,
+    longitude_change_threshold_deg: float,
+    elevation_change_threshold_m: float,
+) -> _FileStationIdIndex:
+    '''Identify one station's usable records and coordinates in one file.'''
+
+    # Open the source without constructing unnecessary default indexes.
+    ds = xr.open_dataset(
+        madis_mesonet_file,
+        create_default_indexes=False,
+    )
+
+    try:
+        # Load and validate station identifiers without loading the complete dataset.
+        station_id_variable = ds['stationId'].load()
+        if station_id_variable.ndim != 1:
+            raise ValueError('Expected stationId to have exactly one record dimension.')
+
+        record_dimension = station_id_variable.dims[0]
+        target_positions = _record_positions_for_station_id(station_id_variable, station_id)
+
+        if target_positions.size:
+            # Load locations only for files containing the requested station.
+            longitudes = _load_record_array(ds, 'longitude', record_dimension)
+            latitudes = _load_record_array(ds, 'latitude', record_dimension)
+            elevations = _load_record_array(ds, 'elevation', record_dimension)
+
+            # Reject target records whose latitude or longitude is missing.
+            usable_location = np.isfinite(longitudes[target_positions]) & np.isfinite(latitudes[target_positions])
+            record_positions = target_positions[usable_location]
+
+            if record_positions.size:
+                station_longitudes = longitudes[record_positions]
+                station_latitudes = latitudes[record_positions]
+                station_elevations = elevations[record_positions]
+
+                # Apply the same threshold-based location detection as the regional filter.
+                _assign_station_location_codes(
+                    np.zeros(record_positions.size, dtype=np.intp),
+                    [station_id],
+                    station_longitudes,
+                    station_latitudes,
+                    station_elevations,
+                    location_catalogue=location_catalogue,
+                    latitude_change_threshold_deg=latitude_change_threshold_deg,
+                    longitude_change_threshold_deg=longitude_change_threshold_deg,
+                    elevation_change_threshold_m=elevation_change_threshold_m,
+                    allow_new_locations=True,
+                )
+
+                # Retain each exact usable coordinate triplet once across all files.
+                distinct_coordinates.update(
+                    (
+                        float(latitude),
+                        float(longitude),
+                        float(elevation) if np.isfinite(elevation) else None,
+                    )
+                    for longitude, latitude, elevation in zip(
+                        station_longitudes,
+                        station_latitudes,
+                        station_elevations,
+                        strict=True,
+                    )
+                )
+        else:
+            # Preserve an empty integer index without loading unneeded coordinates.
+            record_positions = np.empty(0, dtype=np.intp)
+    finally:
+        # Release the metadata-pass source dataset after all required values are copied.
+        ds.close()
+
+    return _FileStationIdIndex(
+        path=madis_mesonet_file,
+        record_dimension=record_dimension,
+        record_positions=record_positions if retain_record_index else None,
+    )
 
 
 def _scan_file_station_metadata(

@@ -273,7 +273,7 @@ def filter_by_region(
                 units='files',
                 enabled=show_progress,
             ):
-                filtered_files.append(result)  # noqa: PERF402
+                filtered_files.append(result)
             extraction_succeeded = True
         finally:
             if not load_selected and not extraction_succeeded:

@@ -7,6 +7,8 @@ import os
 import warnings
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import datetime
+from functools import cache
+from importlib.resources import as_file, files
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
@@ -854,6 +856,9 @@ def interpolate_to_full_hour(
     if max_workers is None:
         max_workers = min(n_stations, os.cpu_count() or 1)
 
+    # Load station names once before distributing interpolation across processes.
+    station_names = _mesonet_station_names()
+
     # Store completed results independently of process completion order.
     completed_datasets: dict[str, xr.Dataset] = {}
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -865,6 +870,7 @@ def interpolate_to_full_hour(
                 end_date=end_date,
                 max_interpolation_interval_h=max_interpolation_interval_h,
                 verbose=verbose,
+                station_name=station_names.get(station_id, station_id),
             ): station_id
             for station_id, ds_station in stations
         }
@@ -904,6 +910,7 @@ def interpolate_to_full_hour_single(
     end_date: datetime | pd.Timestamp | None = None,
     max_interpolation_interval_h: float = 2,
     verbose: bool = False,
+    station_name: str | None = None,
 ) -> xr.Dataset:
     '''
     Interpolate numeric station observables to a regular full-hourly
@@ -955,6 +962,8 @@ def interpolate_to_full_hour_single(
         default is ``2``.
     verbose : bool, optional
         If True, print progress and skip information. The default is False.
+    station_name : str, optional
+        Station name. If omitted, it is retrieved from the MADIS station table.
 
     Returns
     -------
@@ -1012,6 +1021,10 @@ def interpolate_to_full_hour_single(
     if station_id_values.size != 1:
         raise ValueError('The stationID variable must contain one value.')
     station_id = str(station_id_values[0])
+
+    # Retrieve the station name from the MADIS station table.
+    if station_name is None:
+        station_name = _mesonet_station_names().get(station_id, station_id)
 
     # Exclude station metadata from interpolation.
     skip_var_names = ['stationID', 'latitude', 'longitude', 'elevation']
@@ -1264,8 +1277,8 @@ def interpolate_to_full_hour_single(
             'station times, with a maximum interpolation interval of ' + str(np.round(max_interpolation_interval_h, 2)) + ' h'
         )
 
-    # Add variables that are functions of station only.
-    ds_out['STATION_NAME'] = ('station', [station_id])
+    # Add station name.
+    ds_out['STATION_NAME'] = ('station', [station_name])
 
     # Add station latitude and its metadata.
     ds_out['LAT'] = ('station', [np.float32(ds['latitude'].values[0])])
@@ -1283,7 +1296,7 @@ def interpolate_to_full_hour_single(
     ds_out['ELEV'] = ('station', [np.float32(ds['elevation'].values[0])])
     ds_out['ELEV'].attrs['_FillValue'] = np.nan
     ds_out['ELEV'].attrs['long_name'] = 'elevation'
-    ds_out['ELEV'].attrs['units'] = ds['elevation'].attrs.get('units', '')
+    ds_out['ELEV'].attrs['units'] = 'm'
 
     # Add global attributes describing the output dataset.
     ds_out.attrs['name'] = 'MADIS Mesonet surface data'
@@ -1653,6 +1666,42 @@ def _bulk_frame_to_station_datasets(
         ds_dictionary[station_id] = station_ds
 
     return ds_dictionary
+
+
+@cache
+def _mesonet_station_names() -> dict[str, str]:
+    '''Return cleaned station names from the packaged NOAA station table.'''
+
+    # Access the station table through the installed madis_data package.
+    resource = files('madis_data') / 'data' / 'NOAA' / 'public_stntbl.csv'
+    with as_file(resource) as station_table_file:
+        # Read only the station identifier and station name columns.
+        madis_stations = pd.read_csv(
+            station_table_file,
+            header=None,
+            usecols=[0, 7],
+            names=['stationId', 'stationName'],
+            dtype=str,
+            keep_default_na=False,
+        )
+
+    # Remove fixed-width padding from station identifiers.
+    madis_stations['stationId'] = madis_stations['stationId'].str.strip()
+
+    # Discard the subprovider stored in characters 40-50 of the station-location field.
+    station_names = madis_stations['stationName'].str.slice(stop=39).str.rstrip()
+    # Remove padded state, province, and country designations used internationally.
+    station_names = station_names.str.replace(r'\s{2,}(?:[A-Z]{2}\s+)?[A-Z]{2}$', '', regex=True)
+    # Remove compact United States and Canadian state/province-country designations.
+    station_names = station_names.str.replace(r'\s+[A-Z]{2}\s+(?:US|CA)$', '', regex=True)
+    madis_stations['stationName'] = station_names.str.strip()
+
+    # Ignore empty identifiers or names.
+    usable = madis_stations['stationId'].ne('') & madis_stations['stationName'].ne('')
+    madis_stations = madis_stations.loc[usable].drop_duplicates('stationId', keep='first')
+
+    # Build the cached station identifier-to-name lookup.
+    return dict(zip(madis_stations['stationId'], madis_stations['stationName'], strict=True))
 
 
 def _pack_mesonet_station_ids(station_id: xr.DataArray) -> np.ndarray | None:

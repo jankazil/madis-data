@@ -19,11 +19,22 @@ MADIS data are provided by the [National Centers for Environmental Prediction](h
 pip install madis-data
 ```
 
-### conda / mamba
+### Conda/Mamba
 
 ```bash
 mamba install -c jan.kazil -c conda-forge madis-data
 ```
+### Jupyter
+
+If the Conda/Mamba environment in which **madis-data** was installed is not yet available as a Jupyter kernel, install the Jupyter dependencies and register the environment as a kernel:
+
+```bash
+mamba install -c conda-forge jupyter_client jupyter_core notebook ipykernel
+
+python -m ipykernel install --user --name "$CONDA_DEFAULT_ENV" --display-name "Python ($CONDA_DEFAULT_ENV)"
+```
+
+The kernel will then appear in Jupyter as `Python (<environment-name>)`.
 
 ## Overview
 
@@ -105,11 +116,7 @@ The detailed workflow is documented in the [HowTo](https://github.com/jankazil/m
 7. plot the stations in the state of Colorado on a US map.
 
 ### Requirements
-This notebook requires the Jupyter kernel madis-data, which is automaticaly installed as part of the madis-data conda development environment. The conda development environment can be installed from the root directory of the madis-data distribution with
-
-```bash
-make setup-dev-env
-```
+The notebook requires a Jupyter kernel being available in the Python environment in which madis-data has been installed (Section "Jupyter").
 <!--
 ## Executables
 

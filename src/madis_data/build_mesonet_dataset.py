@@ -271,7 +271,14 @@ def arg_parse(
         'merged hourly dataset as a NetCDF file.\n\n'
         'The start and end dates represent 00:00 UTC. One additional day is downloaded before '
         'and after the requested interval to support interpolation at its boundaries.\n\n'
-        'Existing downloaded or preprocessed files are reused unless --refresh is specified.'
+        'Existing downloaded or preprocessed files are reused unless --refresh is specified.\n\n'
+        '\n\n'
+        "Valid region or station arguments:\n\n"
+        f"  - US states/territories: {', '.join(region_codes.us_states_territories)}\n\n"
+        f"  - Special region: {region_codes.conus}\n\n"
+        f"  - RTO/ISO regions: {', '.join(region_codes.rto_iso_regions)}\n\n"
+        "  - Individual station: provide a station ID from the public MADIS station list available at\n"
+        '    https://madis-data.bldr.ncep.noaa.gov/madisPublic1/data/stations/public_stntbl.csv'
     )
 
     parser = argparse.ArgumentParser(

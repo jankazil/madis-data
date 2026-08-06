@@ -220,7 +220,7 @@ def download_mesonet(
     n_jobs: int = 8,
 ) -> list[Path]:
     '''
-    Download and optionally preprocess hourly MADIS Mesonet files.
+    Download and optionally preprocess MADIS Mesonet files.
 
     Existing valid output files are reused unless ``refresh`` is True. When
     preprocessing is enabled, selected observations are quality controlled,
@@ -240,8 +240,8 @@ def download_mesonet(
         If True, download files even when local copies exist. The default is
         False.
     remove_original : bool, optional
-        If True, remove downloaded source files after preprocessing. The
-        default is False.
+        If True, remove downloaded original MADIS Mesonet files after preprocessing.
+        The default is False.
     verbose : bool, optional
         Passed to the downloader to control messages. The default is False.
     n_jobs : int, optional
@@ -277,7 +277,7 @@ def download_mesonet(
     skip_files_preprocessed = []
 
     if not refresh:
-        # Construct the expected local source paths.
+        # Construct the expected local original MADIS Mesonet file paths.
         file_paths = mesonet_local_file_paths(data_dir, file_urls)
 
         if preprocess:
@@ -299,7 +299,7 @@ def download_mesonet(
                         # Release the file after validation succeeds or fails.
                         ds.close()
         else:
-            # Reuse existing source files when preprocessing is disabled.
+            # Reuse existing original MADIS Mesonet files when preprocessing is disabled.
             for file_url, file_path in zip(file_urls, file_paths, strict=True):
                 if file_path.is_file():
                     skip_urls.append(file_url)
@@ -308,6 +308,11 @@ def download_mesonet(
         skip_urls = list(set(skip_urls))
         skip_files = mesonet_local_file_paths(data_dir, skip_urls)
         skip_files_preprocessed = mesonet_local_file_paths_preprocessed(skip_files)
+
+        # Remove original MADIS Mesonet files whose valid preprocessed files are being reused.
+        if preprocess and remove_original:
+            for file_path in skip_files:
+                _remove_mesonet_source_file(file_path)
 
         file_urls = [url for url in file_urls if url not in skip_urls]
 
@@ -334,12 +339,12 @@ def download_mesonet(
             try:
                 if len(dss) < len(file_paths_short_list):
                     raise ValueError(
-                        'The number of downloaded MADIS Mesonet files is greater than the '
+                        'The number of downloaded original MADIS Mesonet files is greater than the '
                         'number of resulting processed datasets.'
                     )
                 if len(dss) > len(file_paths_short_list):
                     raise ValueError(
-                        'The number of downloaded MADIS Mesonet files is smaller than the '
+                        'The number of downloaded original MADIS Mesonet files is smaller than the '
                         'number of resulting processed datasets.'
                     )
 
@@ -352,16 +357,15 @@ def download_mesonet(
                     # Record the preprocessed output path.
                     downloaded_files.append(file_path_preprocessed)
                     if remove_original:
-                        # Remove the source file and any accompanying ETAG.
-                        file_path.unlink(missing_ok=True)
-                        Path(f'{file_path}.etag').unlink(missing_ok=True)
+                        # Remove the original MADIS Mesonet file and any accompanying ETAG.
+                        _remove_mesonet_source_file(file_path)
             finally:
                 # Release every processed dataset if validation or writing fails.
                 for ds in dss:
                     ds.close()
 
         else:
-            # Record the downloaded source paths.
+            # Record the downloaded original MADIS Mesonet file paths.
             downloaded_files += file_paths_short_list
 
         # Print progress after completing the batch.
@@ -387,7 +391,7 @@ def extract_mesonet_data(file_paths: list[Path], n_jobs: int = 1) -> list[xr.Dat
     Parameters
     ----------
     file_paths : list[Path]
-        Paths of MADIS Mesonet source files.
+        Paths of original MADIS Mesonet files.
     n_jobs : int, optional
         Number of worker threads. The default is 1.
 
@@ -417,18 +421,18 @@ def extract_mesonet_data(file_paths: list[Path], n_jobs: int = 1) -> list[xr.Dat
 
 def extract_mesonet_data_single(file_path: Path) -> xr.Dataset:
     '''
-    Preprocess and quality-control one MADIS Mesonet file.
+    Preprocess and quality-control a MADIS Mesonet file.
 
     Parameters
     ----------
     file_path : Path
-        Path of a MADIS Mesonet source file.
+        Path of an original MADIS Mesonet file.
 
     Returns
     -------
     xr.Dataset
         Dataset containing retained observations, Cartesian wind components,
-        processing metadata, and the source-file path.
+        processing metadata, and the original data file path.
     '''
 
     # Obtain the variable groups used for extraction and quality control.
@@ -515,7 +519,7 @@ def extract_mesonet_data_single(file_path: Path) -> xr.Dataset:
         'calculated, and the wind speed magnitude and direction variables were removed.'
     )
 
-    # Record the source-file path.
+    # Record the original data file path.
     ds.attrs['file_orig'] = str(file_path)
 
     return ds
@@ -1782,6 +1786,15 @@ def _prepare_mesonet_station_id_keys(
         return encoded_ids
 
     return np.asarray(mesonet_station_ids2strings(station_id))
+
+
+def _remove_mesonet_source_file(file_path: Path) -> None:
+    '''
+    Remove one original Mesonet file and its ETag file.
+    '''
+
+    file_path.unlink(missing_ok=True)
+    Path(f'{file_path}.etag').unlink(missing_ok=True)
 
 
 def _select_mesonet_station_records(

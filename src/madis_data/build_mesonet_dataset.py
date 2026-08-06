@@ -3,17 +3,17 @@
 '''
 Build Meteorological Assimilation Data Ingest System (MADIS) Mesonet datasets
 for a specified U.S. state, territory, RTO/ISO region, CONUS, or individual
-station. The module automates downloading and optionally preprocessing MADIS
-files, filtering observations by region or station identifier, constructing
-full-hourly UTC time series, saving NetCDF results, and plotting station
-locations. It can be executed as a command-line tool or used programmatically
-through the ``run_build()`` function.
+station. The module automates downloading, preprocessing and optionally removing
+the original downloaded MADIS Mesonet files to reduce storage requirements, filtering
+observations by region or station identifier, constructing full-hourly UTC time
+series, saving NetCDF results, and plotting station locations. It can be executed
+as a command-line tool or used programmatically through the ``run_build()`` function.
 
 Workflow:
 
 1) Construct the requested start and end timestamps at 00:00 UTC and extend the
    download interval by one day at each end for interpolation support.
-2) Download MADIS Mesonet files and optionally preprocess them. Existing files
+2) Download MADIS Mesonet files and preprocess them. Existing files
    are reused unless refresh is requested.
 3) Load the requested region geometry and filter observations spatially, or
    extract one station when a station identifier is supplied.
@@ -26,7 +26,7 @@ Workflow:
 
 Output files:
 
-- Downloaded MADIS files and, by default, their preprocessed counterparts.
+- Downloaded MADIS Mesonet files and, by default, their preprocessed counterparts.
 - A NetCDF file containing record-oriented observations for the region or
   station.
 - A map showing the selected station locations.
@@ -70,7 +70,6 @@ def run_build(
     spatial_identifier: str,
     data_dir: Path,
     n_jobs: int = 1,
-    preprocess: bool = True,
     remove_original: bool = False,
     refresh: bool = False,
     verbose: bool = False,
@@ -96,12 +95,9 @@ def run_build(
     n_jobs
         Number of parallel workers used for downloading, spatial extraction,
         and interpolation. The default is 1.
-    preprocess
-        If True, preprocess downloaded MADIS files before filtering. The default
-        is True.
     remove_original
-        If True, remove source files after successful preprocessing. The default
-        is False.
+        If True, remove downloaded original MADIS Mesonet files after successful preprocessing.
+        The default is False.
     refresh
         If True, download files even when corresponding local files exist. The
         default is False.
@@ -152,12 +148,11 @@ def run_build(
     data_start_date = start_date - timedelta(days=1)
     data_end_date = end_date + timedelta(days=1)
 
-    # Download and optionally preprocess the required MADIS Mesonet files.
+    # Download and preprocess the required MADIS Mesonet files.
     mesonet_files = download_mesonet(
         data_start_date,
         data_end_date,
         data_dir,
-        preprocess=preprocess,
         refresh=refresh,
         remove_original=remove_original,
         verbose=verbose,
@@ -254,8 +249,8 @@ def arg_parse(
     -------
     tuple
         Parsed start and end date components, spatial identifier, data
-        directory, worker count, preprocessing flag, source-removal flag,
-        refresh flag, and verbosity flag.
+        directory, worker count, source-removal flag, refresh flag, and
+        verbosity flag.
 
     Raises
     ------
@@ -264,9 +259,9 @@ def arg_parse(
     '''
 
     code_description = (
-        'Download and optionally preprocess MADIS Mesonet observations for a selected U.S. '
+        'Download and preprocess MADIS Mesonet observations for a selected U.S. '
         'state, territory, the contiguous United States (CONUS), an RTO/ISO region, or one '
-        'station identifier. The script saves the original downloaded MADIS Mesonet data files, '
+        'station identifier. The script optionally removes the original downloaded MADIS Mesonet data files, '
         'plots station locations, constructs full-hourly UTC time series, and writes the '
         'merged hourly dataset as a NetCDF file.\n\n'
         'The start and end dates represent 00:00 UTC. One additional day is downloaded before '
@@ -319,15 +314,9 @@ def arg_parse(
         ),
     )
     parser.add_argument(
-        '--no-preprocess',
-        dest='preprocess',
-        action='store_false',
-        help='Use downloaded source files directly instead of preprocessing them.',
-    )
-    parser.add_argument(
         '--remove-original',
         action='store_true',
-        help='Remove downloaded source files after successful preprocessing.',
+        help='Remove downloaded original MADIS Mesonet files after successful preprocessing.',
     )
     parser.add_argument(
         '-r',
@@ -354,7 +343,6 @@ def arg_parse(
         args.spatial_identifier,
         Path(args.data_dir),
         args.n,
-        args.preprocess,
         args.remove_original,
         args.refresh,
         args.verbose,
@@ -376,7 +364,6 @@ def main(argv: list[str] | None = None) -> None:
         spatial_identifier,
         data_dir,
         n_jobs,
-        preprocess,
         remove_original,
         refresh,
         verbose,
@@ -392,7 +379,6 @@ def main(argv: list[str] | None = None) -> None:
         spatial_identifier,
         data_dir,
         n_jobs=n_jobs,
-        preprocess=preprocess,
         remove_original=remove_original,
         refresh=refresh,
         verbose=verbose,

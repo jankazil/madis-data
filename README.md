@@ -1,6 +1,8 @@
 # madis-data
 
-**madis-data** is a Python toolkit to download, process, extract, interpolate, and plot Meteorological Assimilation Data Ingest System ([MADIS](https://madis-data.ncep.noaa.gov)) data. Currently, **madis-data** operates with the following publicly available MADIS [Mesonet](https://madis.ncep.noaa.gov/madis_mesonet.shtml) data:
+**madis-data** produces analysis-ready full-hour MADIS Mesonet datasets for arbitrary date ranges and operationally meaningful U.S. regions or individual stations as netCDF files.
+
+It downloads, processes, extracts, and interpolates to the full hour Meteorological Assimilation Data Ingest System ([MADIS](https://madis-data.ncep.noaa.gov)) data. Currently, **madis-data** operates with the following publicly available MADIS [Mesonet](https://madis.ncep.noaa.gov/madis_mesonet.shtml) data:
 
 - 2 m temperature
 - 2 m dewpoint temperature
@@ -27,12 +29,20 @@ mamba install -c jan.kazil -c conda-forge madis-data
 
 The package provides a command-line tool that:
 
-- selects stations by geography (a single station by MADIS station identifier, a U.S. state or territory, Regional Transmission Organization/Independent System Operator regions, and the special region CONUS representing the contiguous United States),
-- downloads Mesonet observation files for a specified date range, optionally preprocesses the observations
+- selects stations by geography (an individual MADIS station, a U.S. state, a Regional Transmission Organization/Independent System Operator regions, and the special region CONUS representing the contiguous United States),
+- downloads Mesonet observation files for a specified date range,
+- extracts, preprocesses, and saves in netCDF files the observables,
+    - 2 m temperature
+    - 2 m dewpoint temperature
+    - 10 m west-east and south-north wind speed
+    - solar radiation
+- optionally removes the original Mesonet observation files after successful preprocessing to reduce storage requirements,
 - constructs full-hourly time series for the supported observables,
 - and saves the spatially filtered observations and hourly time series in netCDF files.
 
 It also generates a map showing the selected station locations.
+
+Once preprocessed files with the above variables have been generated for a given date range, constructing full-hourly time series for that date range for individual stations, U.S. states, or the CONUS region no loner requires downloading the original Mesonet observations again.
 
 Geospatial region selection is based on U.S. Energy Information Administration definitions of Regional Transmission Organization/Independent System Operator footprints and U.S. Census Bureau state and territory boundaries included with the package.
 
@@ -44,7 +54,7 @@ The CLI is exposed as `"build-mesonet-dataset"` when installed.
 
 ```bash
 build-mesonet-dataset START_YEAR START_MONTH START_DAY END_YEAR END_MONTH END_DAY REGION DATA_DIR \
-    [-n N_JOBS] [--no-preprocess] [--remove-original] [-r] [-v]
+    [-n N_JOBS] [--remove-original] [-r] [-v]
 ```
 
 **Positional arguments**  
@@ -57,8 +67,7 @@ build-mesonet-dataset START_YEAR START_MONTH START_DAY END_YEAR END_MONTH END_DA
 **Options**  
 
 - `-n, --n N_JOBS`: Number of parallel workers used for downloading, spatial extraction, and interpolation. Values greater than 1 can accelerate processing but may increase memory use or the risk of network errors.  
-- `--no-preprocess`: Use downloaded source files directly instead of preprocessing them. By default, downloaded files are preprocessed.  
-- `--remove-original`: Remove downloaded source files after successful preprocessing.  
+- `--remove-original`: Remove downloaded original MADIS files after successful preprocessing.
 - `-r, --refresh`: Download files even when corresponding local files already exist.  
 - `-v, --verbose`: Print detailed progress information.  
 
@@ -77,8 +86,6 @@ build-mesonet-dataset -v 2026 1 1 2026 1 31 SMPC2 /path/to/data
 # Build datasets for Colorado using 16 parallel workers and remove source files after preprocessing:
 build-mesonet-dataset -v 2026 1 1 2026 2 1 CO /path/to/data -n 16 --remove-original
 
-# Build datasets for ERCOT directly from downloaded source files without preprocessing:
-build-mesonet-dataset 2026 6 1 2026 7 1 ERCOT /path/to/data --no-preprocess
 ```
 
 ## Workflow (using API)
@@ -86,7 +93,7 @@ build-mesonet-dataset 2026 6 1 2026 7 1 ERCOT /path/to/data --no-preprocess
 The detailed workflow is documented in the [HowTo](https://github.com/jankazil/madis-data/blob/main/notebooks/HowTo.ipynb) Jupyter notebook. The notebook performs the following tasks:
 
 1. download MESONET surface observations data files for January 2026 from the MADIS archive,
-2. extract January 2026 data for stations in the state of Colorado of the following variables:
+2. extract January 2026 data for stations in the state of Colorado of the following observables:
     - 2 m temperature,
     - 2 m dewpoint temperature,
     - 10 m west-east and south-north wind speed,

@@ -127,7 +127,7 @@ def mesonet_local_file_paths(data_dir: Path, urls: list[str]) -> list[Path]:
 
 def mesonet_local_file_paths_preprocessed(file_paths: list[Path]) -> list[Path]:
     '''
-    Construct paths for the preprocessed versions of MADIS files.
+    Construct paths for the preprocessed versions of MADIS Mesonet files.
 
     Parameters
     ----------
@@ -213,18 +213,18 @@ def download_mesonet(
     start_date: datetime,
     end_date: datetime,
     data_dir: Path,
-    preprocess: bool = True,
     refresh: bool = False,
     remove_original: bool = False,
     verbose: bool = False,
     n_jobs: int = 8,
 ) -> list[Path]:
     '''
-    Download and optionally preprocess MADIS Mesonet files.
+    Download and preprocess MADIS Mesonet files.
 
-    Existing valid output files are reused unless ``refresh`` is True. When
-    preprocessing is enabled, selected observations are quality controlled,
-    converted to the output variables, and saved as NetCDF files.
+    Existing valid output files are reused unless ``refresh`` is True.
+    Preprocessing results in the  selected observations being quality
+    controlled, converted to the output variables, and saved as NetCDF
+    files.
 
     Parameters
     ----------
@@ -234,13 +234,11 @@ def download_mesonet(
         Last date to download.
     data_dir : Path
         Directory in which files are stored.
-    preprocess : bool, optional
-        If True, preprocess downloaded files. The default is True.
     refresh : bool, optional
         If True, download files even when local copies exist. The default is
         False.
     remove_original : bool, optional
-        If True, remove downloaded original MADIS Mesonet files after preprocessing.
+        If True, remove downloaded original MADIS Mesonet files after successful preprocessing.
         The default is False.
     verbose : bool, optional
         Passed to the downloader to control messages. The default is False.
@@ -275,6 +273,9 @@ def download_mesonet(
     skip_urls = []
     skip_files = []
     skip_files_preprocessed = []
+
+    # Always preprocess
+    preprocess = True
 
     if not refresh:
         # Construct the expected local original MADIS Mesonet file paths.

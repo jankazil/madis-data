@@ -248,14 +248,27 @@ def run_build(
     # Merge the single-station full-hourly time series into one dataset.
     ds_hourly = merge_hourly(ds_station_hourly_dict)
 
-    # Write hourly datasets containing only stations that meet each concurrent-validity threshold.
+    # Construct hourly datasets containing only stations that meet each concurrent-validity threshold.
 
     for min_valid_fraction in [0.5, 0.666, 0.75, 0.8, 0.9]:
         ds_valid_fraction = filter_by_valid_fraction(ds_hourly, ['temperature', 'dewpoint', 'U10', 'V10'], min_valid_fraction)
-        region_out_file_hourly = data_dir / f'{spatial_identifier}.{file_tag}.hourly.{min_valid_fraction:.3f}.nc'
         try:
+            # Save the data for the region or station.
+            region_out_file_hourly = data_dir / f'{spatial_identifier}.{file_tag}.hourly.{min_valid_fraction:.3f}.nc'
             ds_valid_fraction.to_netcdf(region_out_file_hourly, engine='h5netcdf', mode='w')
             print('Created', region_out_file_hourly)
+            # Construct list of station identifiers
+            station_ids = [str(station_id) for station_id in ds_valid_fraction['station'].values]
+            # Plot the selected stations on a contiguous United States map.
+            region_map_plot = data_dir / f'{spatial_identifier}.{file_tag}.hourly.{min_valid_fraction:.3f}.png'
+            plot_locations_conus(
+                station_ids,
+                list(ds_valid_fraction['LAT'].values),
+                list(ds_valid_fraction['LON'].values),
+                region_map_plot,
+                verbose=verbose,
+            )
+            print('Created', region_map_plot)
         finally:
             ds_valid_fraction.close()
 

@@ -53,6 +53,7 @@ from madis_data import region_codes
 from madis_data.mesonet import (
     download_mesonet,
     extract_station_data,
+    filter_by_valid_fraction,
     interpolate_to_full_hour,
     merge_hourly,
     plot_locations_conus,
@@ -73,7 +74,7 @@ def run_build(
     remove_original: bool = False,
     refresh: bool = False,
     verbose: bool = False,
-) -> tuple[Path, Path, Path]:
+) -> None:
     '''
     Download, filter, and assemble MADIS Mesonet data.
 
@@ -103,12 +104,6 @@ def run_build(
         default is False.
     verbose
         If True, display detailed progress information. The default is False.
-
-    Returns
-    -------
-    region_out_file, region_out_file_hourly, region_map_plot
-        Paths to the record-oriented NetCDF file, full-hourly NetCDF file, and
-        station-location plot.
 
     Raises
     ------
@@ -187,6 +182,7 @@ def run_build(
     try:
         # Save the observations selected for the region or station.
         ds_region.to_netcdf(region_out_file)
+        print('Created', region_out_file)
 
         # Construct list of station identifiers
         station_ids = [str(station_id) for station_id in ds_region['stationID'].values]
@@ -199,6 +195,8 @@ def run_build(
             region_map_plot,
             verbose=verbose,
         )
+
+        print('Created', region_map_plot)
 
         # Construct a dictionary with one dataset per selected station.
         ds_station_dict = extract_station_data(
@@ -222,15 +220,27 @@ def run_build(
     # Merge single-station full-hourly time series into one dataset
     ds_hourly = merge_hourly(ds_station_hourly_dict)
 
+    # Build datasets with stations with a minimum fraction of concurrently valid observations
+
+    for min_valid_fraction in [0.5, 0.666, 0.75, 0.8, 0.9]:
+        ds_valid_fraction = filter_by_valid_fraction(ds_hourly, ['temperature', 'dewpoint', 'U10', 'V10'], min_valid_fraction)
+        region_out_file_hourly = data_dir / f'{spatial_identifier}.{file_tag}.hourly.{min_valid_fraction:.3f}.nc'
+        try:
+            ds_valid_fraction.to_netcdf(region_out_file_hourly, engine='h5netcdf', mode='w')
+            print('Created', region_out_file_hourly)
+        finally:
+            ds_valid_fraction.close()
+
     # Save the merged full-hourly station time series.
     region_out_file_hourly = data_dir / f'{spatial_identifier}.{file_tag}.hourly.nc'
     try:
         ds_hourly.to_netcdf(region_out_file_hourly, engine='h5netcdf', mode='w')
+        print('Created', region_out_file_hourly)
     finally:
         # Release arrays and backend resources associated with the merged dataset.
         ds_hourly.close()
 
-    return region_out_file, region_out_file_hourly, region_map_plot
+    return
 
 
 def arg_parse(
@@ -369,7 +379,7 @@ def main(argv: list[str] | None = None) -> None:
         verbose,
     ) = arg_parse(argv if argv is not None else sys.argv[1:])
 
-    region_out_file, region_out_file_hourly, region_map_plot = run_build(
+    _ = run_build(
         start_year,
         start_month,
         start_day,
@@ -383,13 +393,6 @@ def main(argv: list[str] | None = None) -> None:
         refresh=refresh,
         verbose=verbose,
     )
-
-    print()
-    print('Created the following files:')
-    print()
-    print(region_out_file)
-    print(region_out_file_hourly)
-    print(region_map_plot)
 
 
 if __name__ == '__main__':

@@ -1378,6 +1378,60 @@ def merge_hourly(station_datasets: dict[str, xr.Dataset]) -> xr.Dataset:
     return combined
 
 
+def filter_by_valid_fraction(
+    ds: xr.Dataset,
+    vars: list[str],
+    min_valid_fraction: float,
+) -> xr.Dataset:
+    '''
+    Select stations with a minimum fraction of concurrently valid observations.
+
+    At each time and station, an observation is considered valid only if the
+    values of all specified variables are finite. The function retains stations
+    for which the fraction of such times is at least ``min_valid_fraction``.
+
+    Parameters
+    ----------
+    ds
+        Dataset containing the ``station`` and ``time`` dimensions.
+    vars
+        Names of variables to assess. Each variable must have the dimensions
+        ``station`` and ``time``.
+    min_valid_fraction
+        Minimum required fraction of valid times, between 0 and 1.
+
+    Returns
+    -------
+    xr.Dataset
+        Dataset containing only the stations satisfying the validity criterion.
+    '''
+
+    # Construct an array holding the variable values with the shape (variable, time, station)
+    values = ds[vars].to_array(dim='variable')
+
+    # Construct a boolean array with the shape (variable, time, station) that is
+    # True where the values are finite, logically collapse it with 'and' along the
+    # variable dimension, and calculate the fraction of True values along the time dimension
+    valid_fraction = np.isfinite(values).all(dim='variable').mean(dim='time')
+
+    # Boolean mask that is true at station indices that have a valid fraction, and False elsewhere
+    valid_station_mask = valid_fraction.values >= min_valid_fraction
+
+    # Give the indices of the True values in the array, skipping the False values
+    valid_station_ixs = np.flatnonzero(valid_station_mask).tolist()
+
+    # Construct a dataset with only the stations that have a valid fraction of values
+    ds_valid = ds.isel(station=valid_station_mask)
+
+    ds_valid.attrs['processing_note_1'] = (
+        f'{len(valid_station_ixs)} out of {ds.sizes["station"]} stations are included that have at least {100 * min_valid_fraction} % of the time concurrently valid values for the variables '
+        + ', '.join(vars)
+        + '.'
+    )
+
+    return ds_valid
+
+
 def plot_locations_conus(
     station_ids: list[str],
     station_lats: list[float],

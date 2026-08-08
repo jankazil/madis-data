@@ -1,36 +1,49 @@
 #!/usr/bin/env python
 
 '''
-Build Meteorological Assimilation Data Ingest System (MADIS) Mesonet datasets
-for a specified U.S. state, territory, RTO/ISO region, CONUS, or individual
-station. The module automates downloading, preprocessing and optionally removing
-the original downloaded MADIS Mesonet files to reduce storage requirements, filtering
-observations by region or station identifier, constructing full-hourly UTC time
-series, saving NetCDF results, and plotting station locations. It can be executed
-as a command-line tool or used programmatically through the ``run_build()`` function.
+Build Meteorological Assimilation Data Ingest System (MADIS) Mesonet datasets.
+
+The requested observations may cover a U.S. state or territory, a regional
+transmission organization or independent system operator (RTO/ISO) region, the
+contiguous United States (CONUS), or one station. The module downloads and
+preprocesses MADIS Mesonet files, filters observations spatially or by station
+identifier, constructs full-hourly Coordinated Universal Time (UTC) series,
+filters stations by data availability, writes NetCDF datasets, and plots station
+locations. Original downloaded files can optionally be removed after successful
+preprocessing.
+
+The module can be executed as a command-line program or used programmatically
+through ``run_build()``.
 
 Workflow:
 
-1) Construct the requested start and end timestamps at 00:00 UTC and extend the
-   download interval by one day at each end for interpolation support.
-2) Download MADIS Mesonet files and preprocess them. Existing files
-   are reused unless refresh is requested.
+1) Construct the requested interval from 00:00 UTC on the start date through
+   23:00 UTC on the end date. Extend the download interval by one day at each
+   end to support interpolation at the requested boundaries.
+2) Download and preprocess MADIS Mesonet files. Existing files are reused unless
+   refresh is requested.
 3) Load the requested region geometry and filter observations spatially, or
    extract one station when a station identifier is supplied.
-4) Save the record-oriented observations for the selected region or station.
+4) Save the observations for the selected region or station.
 5) Plot the locations of the selected stations on a contiguous United States
    map.
-6) Extract a time-dependent dataset for each station and interpolate the data
-   to full-hourly UTC timestamps over the requested interval.
-7) Merge the station time series and save them as a NetCDF file.
+6) Extract a time-dependent dataset for each station, interpolate observations
+   to full-hourly UTC timestamps, and merge the station time series.
+7) For each configured validity threshold, retain stations meeting the minimum
+   fraction of times at which temperature, dewpoint, and both 10 m wind
+   components are concurrently valid, and save the filtered dataset.
+8) Save the unfiltered merged full-hourly dataset.
 
 Output files:
 
-- Downloaded MADIS Mesonet files and, by default, their preprocessed counterparts.
-- A NetCDF file containing record-oriented observations for the region or
-  station.
+- Downloaded MADIS Mesonet files and their preprocessed counterparts. Original
+  downloaded files are retained by default.
+- A NetCDF file containing observations for the region or station.
 - A map showing the selected station locations.
-- A NetCDF file containing the merged full-hourly UTC station time series.
+- Five NetCDF files containing full-hourly station time series filtered at the
+  configured concurrent-validity thresholds.
+- A NetCDF file containing the unfiltered merged full-hourly UTC station time
+  series.
 
 Assumptions:
 
@@ -78,27 +91,37 @@ def run_build(
     '''
     Download, filter, and assemble MADIS Mesonet data.
 
-    The requested date interval begins and ends at 00:00 UTC. Files from one
-    additional day before and after the interval are downloaded so observations
-    can bracket its boundary hours during interpolation.
+    The requested interval runs from 00:00 UTC on the start date through 23:00
+    UTC on the end date. Files from one additional day before and after the
+    interval are downloaded so observations can bracket its boundary hours
+    during interpolation.
+
+    The function writes the spatially selected observations, a
+    station-location map, the unfiltered merged hourly dataset, and hourly
+    datasets filtered at concurrent-validity fractions of 0.500, 0.666, 0.750,
+    0.800, and 0.900. At a given station and time, an observation is concurrently
+    valid only when temperature, dewpoint, U10, and V10 are all finite.
 
     Parameters
     ----------
     start_year, start_month, start_day
-        Components of the first requested timestamp.
+        Calendar components of the first requested date. Its first included
+        timestamp is 00:00 UTC.
     end_year, end_month, end_day
-        Components of the last requested timestamp.
+        Calendar components of the last requested date. Its last included
+        timestamp is 23:00 UTC.
     spatial_identifier
         Spatial identifier, such as a U.S. state or territory code, ``CONUS``, an
         RTO/ISO code, or a MADIS Mesonet station identifier.
     data_dir
-        Directory where downloaded data and generated outputs are stored.
+        Directory in which downloaded data, intermediate files, and generated
+        outputs are stored. It is created if necessary.
     n_jobs
         Number of parallel workers used for downloading, spatial extraction,
         and interpolation. The default is 1.
     remove_original
-        If True, remove downloaded original MADIS Mesonet files after successful preprocessing.
-        The default is False.
+        If True, remove original downloaded MADIS Mesonet files after successful
+        preprocessing. The default is False.
     refresh
         If True, download files even when corresponding local files exist. The
         default is False.
@@ -109,6 +132,11 @@ def run_build(
     ------
     ValueError
         If the end timestamp precedes the start timestamp.
+
+    Returns
+    -------
+    None
+        Results are written to ``data_dir``.
     '''
 
     # Create the data directory unless it exists.
@@ -167,7 +195,7 @@ def run_build(
             show_progress=verbose,
         )
     else:
-        # Filter records using the geometry associated with the spatial identifier.
+        # Filter data using the geometry associated with the spatial identifier.
         ds_region = filter_by_region(
             mesonet_files,
             spatial_identifier,
@@ -175,7 +203,7 @@ def run_build(
             show_progress=verbose,
         )
 
-    # Define output files paths.
+    # Define paths for the regional data file and station-location map.
     region_out_file = data_dir / f'{spatial_identifier}.{file_tag}.nc'
     region_map_plot = data_dir / f'{spatial_identifier}.{file_tag}_stations.png'
 
@@ -208,7 +236,7 @@ def run_build(
         # Release any resources retained by the spatially filtered dataset.
         ds_region.close()
 
-    # Create full-hourly time series by interpolation of the data for each station
+    # Interpolate each station dataset to full-hourly timestamps in the requested interval.
     ds_station_hourly_dict = interpolate_to_full_hour(
         ds_station_dict,
         start_date=start_date,
@@ -217,10 +245,10 @@ def run_build(
         max_workers=n_jobs,
     )
 
-    # Merge single-station full-hourly time series into one dataset
+    # Merge the single-station full-hourly time series into one dataset.
     ds_hourly = merge_hourly(ds_station_hourly_dict)
 
-    # Build datasets with stations with a minimum fraction of concurrently valid observations
+    # Write hourly datasets containing only stations that meet each concurrent-validity threshold.
 
     for min_valid_fraction in [0.5, 0.666, 0.75, 0.8, 0.9]:
         ds_valid_fraction = filter_by_valid_fraction(ds_hourly, ['temperature', 'dewpoint', 'U10', 'V10'], min_valid_fraction)
@@ -245,7 +273,7 @@ def run_build(
 
 def arg_parse(
     argv: list[str] | None = None,
-) -> tuple[int, int, int, int, int, int, str, Path, int, bool, bool, bool, bool]:
+) -> tuple[int, int, int, int, int, int, str, Path, int, bool, bool, bool]:
     '''
     Parse command-line arguments for the Mesonet dataset builder.
 
@@ -258,9 +286,9 @@ def arg_parse(
     Returns
     -------
     tuple
-        Parsed start and end date components, spatial identifier, data
-        directory, worker count, source-removal flag, refresh flag, and
-        verbosity flag.
+        Parsed start-year, start-month, start-day, end-year, end-month, end-day,
+        spatial identifier, data directory, worker count, source-removal flag,
+        refresh flag, and verbosity flag, in that order.
 
     Raises
     ------
@@ -273,12 +301,13 @@ def arg_parse(
         'state, territory, the contiguous United States (CONUS), an RTO/ISO region, or one '
         'station identifier. The script optionally removes the original downloaded MADIS Mesonet data files, '
         'plots station locations, constructs full-hourly UTC time series, and writes the '
-        'merged hourly dataset as a NetCDF file.\n\n'
-        'The start and end dates represent 00:00 UTC. One additional day is downloaded before '
-        'and after the requested interval to support interpolation at its boundaries.\n\n'
+        'merged hourly datasets as NetCDF files.\n\n'
+        'The requested interval runs from 00:00 UTC on the start date through 23:00 UTC '
+        'on the end date. One additional day is downloaded before and after the requested '
+        'interval to support interpolation at its boundaries.\n\n'
         'Existing downloaded or preprocessed files are reused unless --refresh is specified.\n\n'
         '\n\n'
-        "Valid region or station arguments:\n\n"
+        'Valid region or station arguments:\n\n'
         f"  - US states/territories: {', '.join(region_codes.us_states_territories)}\n\n"
         f"  - Special region: {region_codes.conus}\n\n"
         f"  - RTO/ISO regions: {', '.join(region_codes.rto_iso_regions)}\n\n"
@@ -362,6 +391,16 @@ def arg_parse(
 def main(argv: list[str] | None = None) -> None:
     '''
     Run the command-line Mesonet dataset-building workflow.
+
+    Parameters
+    ----------
+    argv
+        Argument tokens excluding the program name. If None, arguments are read
+        from ``sys.argv[1:]``.
+
+    Returns
+    -------
+    None
     '''
 
     (

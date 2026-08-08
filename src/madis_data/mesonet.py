@@ -321,6 +321,7 @@ def download_mesonet(
     downloaded_files = []
 
     # Print initial progress information.
+    print('Downloading Mesonet data files ...')
     print(f'\rProgress: {0:.2f} %', end='', flush=True)
 
     for ii in range(0, len(file_urls), n_jobs):
@@ -679,8 +680,7 @@ def extract_station_data(
         subset of the stations in ``ds``. If not provided, data for
         all stations in ``ds`` will be extracted.
     show_progress : bool, optional
-        Whether to display phase-based extraction progress. The default is
-        True.
+        Whether to display extraction progress. The default is True.
 
     Returns
     -------
@@ -803,6 +803,7 @@ def interpolate_to_full_hour(
     end_date: datetime | pd.Timestamp | None = None,
     max_interpolation_interval_h: float = 2,
     verbose: bool = False,
+    show_progress: bool = True,
     max_workers: int | None = None,
 ) -> dict[str, xr.Dataset]:
     '''
@@ -816,11 +817,14 @@ def interpolate_to_full_hour(
     stations = list(ds_dict.items())
     n_stations = len(stations)
 
-    print('\rProgress: 0.00 %', end='', flush=True)
+    if show_progress:
+        print('Interpolating time series to full hour ...')
+        print('\rProgress: 0.00 %', end='', flush=True)
 
     # Return an empty result without constructing an invalid process pool.
     if not stations:
-        print(f'\rProgress: {100:.2f} %')
+        if show_progress:
+            print(f'\rProgress: {100:.2f} %')
         return {}
 
     # Determine the first and last full hours within the time spans of
@@ -885,7 +889,8 @@ def interpolate_to_full_hour(
             completed_datasets[station_id] = future.result()
 
             progress = 100 * ii / n_stations
-            print(f'\rProgress: {progress:.2f} %', end='', flush=True)
+            if show_progress:
+                print(f'\rProgress: {progress:.2f} %', end='', flush=True)
 
     print()
 
@@ -1314,15 +1319,17 @@ def interpolate_to_full_hour_single(
     )
     ds_out.attrs['source'] = 'National Centers for Environmental Prediction (NCEP)'
     ds_out.attrs['URL'] = 'https://madis-data.ncep.noaa.gov'
+    if 'region' in ds.attrs:
+        ds_out.attrs['region'] = ds.attrs['region']
     ds_out.attrs['processed_with'] = 'https://github.com/jankazil/madis-data'
 
     # Add a global attribute with the list of files from which the dataset was constructed
-    if 'files_orig' in ds.attrs:
-        files_orig = ds.attrs['files_orig']
-        if isinstance(files_orig, str):
-            files_orig = [files_orig]
-        ds_out.attrs['files_orig'] = list(files_orig)
-    ds_out.attrs.pop('file_orig', None)
+    #    if 'files_orig' in ds.attrs:
+    #        files_orig = ds.attrs['files_orig']
+    #        if isinstance(files_orig, str):
+    #            files_orig = [files_orig]
+    #        ds_out.attrs['files_orig'] = list(files_orig)
+    #    ds_out.attrs.pop('file_orig', None)
 
     return ds_out
 

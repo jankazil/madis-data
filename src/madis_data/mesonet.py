@@ -450,13 +450,13 @@ def extract_mesonet_data_single(file_path: Path) -> xr.Dataset:
         da_qc = ds[varname_qc]
 
         # Obtain the missing value used by this variable.
-        missing_value = get_missing_value(da_var)
+        missing_value = np.asarray(get_missing_value(da_var), dtype=np.float32)
 
         # Identify observations that passed quality control.
         qc_mask = (da_qc == np.bytes_('S')) | (da_qc == np.bytes_('V'))
 
         # Replace rejected observations with the declared missing value.
-        ds[varname] = mask_with_missing_value(da_var, qc_mask, missing_value)
+        ds[varname] = mask_with_missing_value(da_var, qc_mask, missing_value).astype(np.float32)
 
     # Reject wind speeds outside the permitted range of 0 to 50 m s-1.
     varname_ws = 'windSpeed'
@@ -464,15 +464,15 @@ def extract_mesonet_data_single(file_path: Path) -> xr.Dataset:
 
     if varname_ws in ds.data_vars:
         da_var = ds[varname_ws]
-        missing_value = get_missing_value(da_var)
+        missing_value = np.asarray(get_missing_value(da_var), dtype=np.float32)
         qc_mask = (da_var >= 0.0) & (da_var <= 50.0)
-        ds[varname_ws] = mask_with_missing_value(da_var, qc_mask, missing_value)
+        ds[varname_ws] = mask_with_missing_value(da_var, qc_mask, missing_value).astype(np.float32)
 
         if varname_wd in ds.data_vars:
             # Reject wind directions associated with invalid wind speeds.
             da_var = ds[varname_wd]
-            missing_value = get_missing_value(da_var)
-            ds[varname_wd] = mask_with_missing_value(da_var, qc_mask, missing_value)
+            missing_value = np.asarray(get_missing_value(da_var), dtype=np.float32)
+            ds[varname_wd] = mask_with_missing_value(da_var, qc_mask, missing_value).astype(np.float32)
 
     # Convert wind speed and direction to Cartesian wind components.
     if varname_ws in ds.data_vars and varname_wd in ds.data_vars:
@@ -482,27 +482,23 @@ def extract_mesonet_data_single(file_path: Path) -> xr.Dataset:
         # Mark records for which both wind values are finite.
         mask = np.isfinite(ws) & np.isfinite(wd)
 
-        # Initialize the wind components with missing values.
-        ds['U10'] = ('recNum', np.full(ds.sizes['recNum'], np.nan, dtype=np.float32))
-        ds['V10'] = ('recNum', np.full(ds.sizes['recNum'], np.nan, dtype=np.float32))
-
         # Convert meteorological direction from degrees to radians.
         theta = np.deg2rad(wd)
 
         # Calculate west-east and south-north wind components.
-        ds['U10'] = xr.where(mask, -ws * np.sin(theta), ds['U10'], keep_attrs=False).astype(np.float32)
-        ds['V10'] = xr.where(mask, -ws * np.cos(theta), ds['V10'], keep_attrs=False).astype(np.float32)
+        ds['U10'] = xr.where(mask, -ws * np.sin(theta), np.float32(np.nan), keep_attrs=False).astype(np.float32)
+        ds['V10'] = xr.where(mask, -ws * np.cos(theta), np.float32(np.nan), keep_attrs=False).astype(np.float32)
 
         # Describe the calculated wind components.
         ds['U10'].attrs['long_name'] = 'West-east wind speed'
         ds['U10'].attrs['units'] = ws.attrs['units']
-        ds['U10'].attrs['missing_value'] = np.nan
-        ds['U10'].encoding['_FillValue'] = np.nan
+        ds['U10'].attrs['missing_value'] = np.float32(np.nan)
+        ds['U10'].encoding['_FillValue'] = np.float32(np.nan)
 
         ds['V10'].attrs['long_name'] = 'South-north wind speed'
         ds['V10'].attrs['units'] = ws.attrs['units']
-        ds['V10'].attrs['missing_value'] = np.nan
-        ds['V10'].encoding['_FillValue'] = np.nan
+        ds['V10'].attrs['missing_value'] = np.float32(np.nan)
+        ds['V10'].encoding['_FillValue'] = np.float32(np.nan)
 
         # Remove the source wind speed and direction variables.
         ds = ds.drop_vars([varname_ws, varname_wd])
@@ -628,7 +624,13 @@ def preprocess_mesonet_file(file_path: Path, varnames: str | list[str]) -> xr.Da
                 attrs = variable.attrs.copy()
                 encoding = variable.encoding.copy()
 
-                variable = variable.where(~variable.isin(valid_fill_values))
+                if np.issubdtype(variable.dtype, np.floating):
+                    variable = variable.where(
+                        ~variable.isin(valid_fill_values),
+                        other=np.float32(np.nan),
+                    ).astype(np.float32)
+                else:
+                    variable = variable.where(~variable.isin(valid_fill_values))
 
                 variable.attrs = attrs
                 variable.encoding = encoding
@@ -642,8 +644,8 @@ def preprocess_mesonet_file(file_path: Path, varnames: str | list[str]) -> xr.Da
 
             # Write floating-point missing values as NaN.
             if np.issubdtype(ds[name].dtype, np.floating):
-                ds[name].encoding['_FillValue'] = np.nan
-                ds[name].attrs['missing_value'] = np.nan
+                ds[name].encoding['_FillValue'] = np.float32(np.nan)
+                ds[name].attrs['missing_value'] = np.float32(np.nan)
 
         # Remove the original time metadata and specify exactly how the
         # datetime values should be encoded when written to NetCDF.
@@ -1182,7 +1184,7 @@ def interpolate_to_full_hour_single(
             )
 
         # Initialize the hourly output values as missing.
-        timeseries_hourly = np.full(hour_n, np.nan)
+        timeseries_hourly = np.full(hour_n, np.nan, dtype=np.float32)
 
         # Loop over full hours.
 
@@ -1262,7 +1264,7 @@ def interpolate_to_full_hour_single(
 
         # Add the interpolated observable as a function of time and station.
 
-        ds_out[var_name] = (('time', 'station'), timeseries_hourly[:, np.newaxis].astype(np.float32))
+        ds_out[var_name] = (('time', 'station'), timeseries_hourly[:, np.newaxis])
 
         if 'long_name' in ds[var_name].attrs:
             ds_out[var_name].attrs['long_name'] = ds[var_name].attrs['long_name']
@@ -1292,19 +1294,19 @@ def interpolate_to_full_hour_single(
 
     # Add station latitude and its metadata.
     ds_out['LAT'] = ('station', [np.float32(ds['latitude'].values[0])])
-    ds_out['LAT'].attrs['_FillValue'] = np.nan
+    ds_out['LAT'].attrs['_FillValue'] = np.float32(np.nan)
     ds_out['LAT'].attrs['long_name'] = 'latitude'
     ds_out['LAT'].attrs['units'] = '° N'
 
     # Add station longitude and its metadata.
     ds_out['LON'] = ('station', [np.float32(ds['longitude'].values[0])])
-    ds_out['LON'].attrs['_FillValue'] = np.nan
+    ds_out['LON'].attrs['_FillValue'] = np.float32(np.nan)
     ds_out['LON'].attrs['long_name'] = 'longitude'
     ds_out['LON'].attrs['units'] = '° E'
 
     # Add station elevation and its metadata.
     ds_out['ELEV'] = ('station', [np.float32(ds['elevation'].values[0])])
-    ds_out['ELEV'].attrs['_FillValue'] = np.nan
+    ds_out['ELEV'].attrs['_FillValue'] = np.float32(np.nan)
     ds_out['ELEV'].attrs['long_name'] = 'elevation'
     ds_out['ELEV'].attrs['units'] = 'm'
 
@@ -1612,7 +1614,7 @@ def _build_bulk_station_frame(
         if np.issubdtype(selected_values.dtype, np.number):
             finite_values = np.isfinite(selected_values)
             if not finite_values.all():
-                selected_values = selected_values.astype(np.result_type(selected_values.dtype, np.float64), copy=True)
+                selected_values = selected_values.copy()
                 selected_values[~finite_values] = np.nan
 
         frame_data[variable_name] = selected_values

@@ -71,7 +71,7 @@ from madis_data.mesonet import (
     merge_hourly,
     plot_locations_conus,
 )
-from madis_data.mesonet_spatial_filter import filter_by_id, filter_by_region
+from madis_data.spatial_filter import filter_by_id, filter_by_region
 
 
 def run_build(
@@ -235,6 +235,7 @@ def run_build(
     finally:
         # Release any resources retained by the spatially filtered dataset.
         ds_region.close()
+        del ds_region
 
     # Interpolate each station dataset to full-hourly timestamps in the requested interval.
     ds_station_hourly_dict = interpolate_to_full_hour(
@@ -247,6 +248,9 @@ def run_build(
 
     # Merge the single-station full-hourly time series into one dataset.
     ds_hourly = merge_hourly(ds_station_hourly_dict)
+
+    # Release resources
+    del ds_station_dict
 
     # Construct hourly datasets containing only stations that meet each concurrent-validity threshold.
 
@@ -271,6 +275,8 @@ def run_build(
             print('Created', region_map_plot)
         finally:
             ds_valid_fraction.close()
+            # Release resources
+            del ds_valid_fraction
 
     # Save the merged full-hourly station time series.
     region_out_file_hourly = data_dir / f'{spatial_identifier}.{file_tag}.hourly.nc'
@@ -280,6 +286,8 @@ def run_build(
     finally:
         # Release arrays and backend resources associated with the merged dataset.
         ds_hourly.close()
+        # Release resources
+        del ds_hourly
 
     return
 

@@ -10,6 +10,7 @@ from datetime import datetime
 from functools import cache
 from importlib.resources import as_file, files
 from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
 from urllib.parse import urlparse
 
 import cartopy.crs as ccrs
@@ -119,8 +120,10 @@ def mesonet_local_file_paths(data_dir: Path, urls: list[str]) -> list[Path]:
         Local paths formed from the URL filenames.
     '''
 
-    # Attach each URL filename to the local data directory.
-    file_paths = [data_dir / PurePosixPath(urlparse(file_url).path).name for file_url in urls]
+    # Create Mesonet file paths by prefixing each URL filename with
+    # - the local data directory
+    # - the 'mesonet_' prefix so they cannot collide with other MADIS products
+    file_paths = [data_dir / f'mesonet_{PurePosixPath(urlparse(file_url).path).name}' for file_url in urls]
 
     return file_paths
 
@@ -328,10 +331,56 @@ def download_mesonet(
         # Process one worker-sized batch of URLs.
         file_urls_short_list = file_urls[ii : ii + n_jobs]
 
-        # Download one batch of Mesonet files.
-        file_paths_short_list = download_threaded(
-            file_urls_short_list, data_dir, refresh=refresh, verbose=verbose, n_jobs=n_jobs
-        )
+        # Construct prefixed source paths and reuse any that already exist.
+        file_paths_short_list = mesonet_local_file_paths(data_dir, file_urls_short_list)
+        urls_to_download = [
+            file_url
+            for file_url, file_path in zip(file_urls_short_list, file_paths_short_list, strict=True)
+            if refresh or not file_path.is_file()
+        ]
+
+        failed_file_paths: set[Path] = set()
+
+        if urls_to_download:
+            with TemporaryDirectory(
+                prefix='mesonet_download_',
+                dir=data_dir,
+            ) as download_dir_name:
+                download_dir = Path(download_dir_name)
+                temporary_files = download_threaded(
+                    urls_to_download,
+                    download_dir,
+                    refresh=True,
+                    verbose=verbose,
+                    n_jobs=n_jobs,
+                )
+
+                temporary_files_by_name = {path.name: path for path in temporary_files}
+
+                for file_url, file_path in zip(
+                    file_urls_short_list,
+                    file_paths_short_list,
+                    strict=True,
+                ):
+                    if file_url not in urls_to_download:
+                        continue
+
+                    source_name = PurePosixPath(urlparse(file_url).path).name
+                    temporary_file = temporary_files_by_name.get(source_name)
+
+                    if temporary_file is None:
+                        failed_file_paths.add(file_path)
+                        warnings.warn(f'Skipping unavailable MADIS MESONET file: {file_url}', stacklevel=1)
+                        continue
+
+                    temporary_file.replace(file_path)
+
+                    temporary_etag = temporary_file.with_name(temporary_file.name + '.etag')
+                    if temporary_etag.is_file():
+                        temporary_etag.replace(file_path.with_name(file_path.name + '.etag'))
+
+        # Do not pass absent or failed files to preprocessing.
+        file_paths_short_list = [path for path in file_paths_short_list if path not in failed_file_paths and path.is_file()]
 
         # Preprocess the downloaded files when requested.
         if preprocess:
@@ -371,7 +420,7 @@ def download_mesonet(
             downloaded_files += file_paths_short_list
 
         # Print progress after completing the batch.
-        progress = 100 * (ii + n_jobs) / len(file_urls)
+        progress = min(100, 100 * (ii + n_jobs) / len(file_urls))
         print(f'\rProgress: {progress:.2f} %', end='', flush=True)
 
     # End the progress line at 100 percent.

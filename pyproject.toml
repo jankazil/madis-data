@@ -30,6 +30,7 @@ dependencies = [
 
 [project.scripts]
 build-mesonet-dataset = "madis_data.build_mesonet_dataset:main" # Connects name of executable in $PATH to the python module containing main()
+build-metar-dataset = "madis_data.build_metar_dataset:main" # Connects name of executable in $PATH to the python module containing main()
 
 [project.optional-dependencies]
 dev = [

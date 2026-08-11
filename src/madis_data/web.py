@@ -26,6 +26,21 @@ def gzip_file_is_valid(file_path: Path) -> bool:
     return True
 
 
+def _request_exception_is_retryable(exception: requests.exceptions.RequestException) -> bool:
+    '''Return whether a failed request is likely to succeed when repeated.'''
+
+    if isinstance(
+        exception, requests.exceptions.Timeout | requests.exceptions.ConnectionError | requests.exceptions.ChunkedEncodingError
+    ):
+        return True
+
+    return (
+        isinstance(exception, requests.exceptions.HTTPError)
+        and exception.response is not None
+        and exception.response.status_code in {408, 429, 500, 502, 503, 504}
+    )
+
+
 def head_ok(url: str, timeout: float = 10.0) -> bool:
     """
     Check whether a remote file exists by issuing a lightweight HTTP request.
@@ -58,8 +73,8 @@ def download_threaded(
     local_dir: Path,
     n_jobs=1,
     refresh: bool = False,
-    max_retries: int = 5,
-    delay_seconds: int = 3,
+    max_retries: int = 3,
+    delay_seconds: int = 2,
     verbose: bool = False,
 ):
     """
@@ -93,7 +108,7 @@ def download_threaded(
 
 
 def download_file(
-    url: str, local_dir: Path, refresh: bool = False, max_retries: int = 5, delay_seconds: int = 3, verbose: bool = False
+    url: str, local_dir: Path, refresh: bool = False, max_retries: int = 3, delay_seconds: int = 2, verbose: bool = False
 ) -> Path:
     '''
     Downloads a file from a given URL to a given local path.
@@ -116,16 +131,17 @@ def download_file(
     local_file_path = local_dir / Path(os.path.basename(url))
 
     # Get ETag with retry
-    for attempt in range(max_retries):
+    for attempt in range(max_retries + 1):
         try:
-            response = requests.head(url, timeout=10)
+            response = requests.head(url, timeout=(10, 60))
             response.raise_for_status()
             break
         except requests.exceptions.RequestException as e:
-            if attempt < max_retries - 1:
+            if _request_exception_is_retryable(e) and attempt < max_retries:
+                retry_delay = delay_seconds * 2**attempt
                 if verbose:
-                    print(f'HEAD request failed ({e}), retrying in {delay_seconds} second(s)...')
-                time.sleep(delay_seconds)
+                    print(f'HEAD request failed ({e}), retrying in {retry_delay} second(s)...')
+                time.sleep(retry_delay)
             else:
                 raise
 
@@ -167,9 +183,9 @@ def download_file(
                 )
 
     # Download with retry
-    for attempt in range(max_retries):
+    for attempt in range(max_retries + 1):
         try:
-            with requests.get(url, stream=True, timeout=30) as r:
+            with requests.get(url, stream=True, timeout=(10, 60)) as r:
                 r.raise_for_status()
                 with open(local_file_path, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=8192):
@@ -178,16 +194,17 @@ def download_file(
 
             # Reject a truncated gzip file before recording a successful download.
             if local_file_path.suffix.lower() == '.gz' and not gzip_file_is_valid(local_file_path):
-                raise requests.exceptions.RequestException(f'Downloaded gzip file is invalid: {url}')
+                raise requests.exceptions.ChunkedEncodingError(f'Downloaded gzip file is invalid: {url}')
 
             break
         except requests.exceptions.RequestException as e:
             # Do not leave an incomplete file available for reuse.
             local_file_path.unlink(missing_ok=True)
-            if attempt < max_retries - 1:
+            if _request_exception_is_retryable(e) and attempt < max_retries:
+                retry_delay = delay_seconds * 2**attempt
                 if verbose:
-                    print(f'Download failed ({e}), retrying in {delay_seconds} second(s)...')
-                time.sleep(delay_seconds)
+                    print(f'Download failed ({e}), retrying in {retry_delay} second(s)...')
+                time.sleep(retry_delay)
             else:
                 raise
 

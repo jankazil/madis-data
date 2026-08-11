@@ -2,12 +2,28 @@
 Tools for downloading things from the web.
 '''
 
+import gzip
 import os
 import time
+import zlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
+
+
+def gzip_file_is_valid(file_path: Path) -> bool:
+    '''Check whether a gzip file can be read completely.'''
+
+    try:
+        with gzip.open(file_path, 'rb') as compressed_file:
+            # Read through the end so gzip verifies the stream trailer and checksum.
+            while compressed_file.read(1024 * 1024):
+                pass
+    except (EOFError, OSError, zlib.error):
+        return False
+
+    return True
 
 
 def head_ok(url: str, timeout: float = 10.0) -> bool:
@@ -124,14 +140,23 @@ def download_file(
         with open(etag_file_path) as f:
             local_etag = f.read().strip()
         if local_etag == etag:
-            if verbose:
+            gzip_valid = local_file_path.suffix.lower() != '.gz' or gzip_file_is_valid(local_file_path)
+            if gzip_valid:
+                if verbose:
+                    print(
+                        url,
+                        'available locally as',
+                        str(local_file_path),
+                        'and ETag matches ETag online. Skipping download.',
+                    )
+                return local_file_path
+            elif verbose:
                 print(
                     url,
                     'available locally as',
                     str(local_file_path),
-                    'and ETag matches ETag online. Skipping download.',
+                    'and ETag matches ETag online, but the gzip file is invalid. Proceeding to download.',
                 )
-            return local_file_path
         else:
             if verbose:
                 print(
@@ -150,8 +175,15 @@ def download_file(
                     for chunk in r.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
+
+            # Reject a truncated gzip file before recording a successful download.
+            if local_file_path.suffix.lower() == '.gz' and not gzip_file_is_valid(local_file_path):
+                raise requests.exceptions.RequestException(f'Downloaded gzip file is invalid: {url}')
+
             break
         except requests.exceptions.RequestException as e:
+            # Do not leave an incomplete file available for reuse.
+            local_file_path.unlink(missing_ok=True)
             if attempt < max_retries - 1:
                 if verbose:
                     print(f'Download failed ({e}), retrying in {delay_seconds} second(s)...')

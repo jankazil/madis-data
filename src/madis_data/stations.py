@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from madis_data.web import download_threaded
+from madis_data.web import download_threaded, gzip_file_is_valid
 
 
 @dataclass(frozen=True)
@@ -253,7 +253,10 @@ def download_station_data(
         urls_to_download = [
             file_url
             for file_url, file_path in zip(file_urls_short_list, file_paths_short_list, strict=True)
-            if refresh or not file_path.is_file()
+            if refresh
+            or not file_path.is_file()
+            # Redownload an existing gzip file when an earlier transfer was incomplete.
+            or (file_path.suffix.lower() == '.gz' and not gzip_file_is_valid(file_path))
         ]
 
         failed_file_paths: set[Path] = set()

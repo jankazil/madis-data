@@ -2,7 +2,7 @@ This directory contains station metadata distributed by the National Oceanic
 and Atmospheric Administration (NOAA) through the Meteorological Assimilation
 Data Ingest System (MADIS).
 
-This product uses MADIS data but is not endorsed or certified by NOAA, the
+This software uses MADIS data but is not endorsed or certified by NOAA, the
 National Weather Service, or any MADIS data provider. The data are not covered
 by the software license of this package.
 

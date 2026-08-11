@@ -1,6 +1,6 @@
 This directory contains data from the U.S. Census Bureau.
 
-This product uses Census Bureau data but is not endorsed
+This software uses Census Bureau data but is not endorsed
 or certified by the Census Bureau, and Census Bureau data
 are not covered by the license of the madis-data package.
 

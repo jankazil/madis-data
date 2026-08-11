@@ -64,7 +64,7 @@ from pathlib import Path
 
 from madis_data import region_codes
 from madis_data.metar import (
-    download_metar,
+    METAR_DATA_SOURCE,
     extract_station_data,
     filter_by_valid_fraction,
     interpolate_to_full_hour,
@@ -72,6 +72,7 @@ from madis_data.metar import (
     plot_locations_conus,
 )
 from madis_data.spatial_filter import filter_by_id, filter_by_region
+from madis_data.stations import download_station_data
 
 
 def run_build(
@@ -172,10 +173,11 @@ def run_build(
     data_end_date = end_date + timedelta(days=1)
 
     # Download and preprocess the required MADIS METAR files.
-    metar_files = download_metar(
+    metar_files = download_station_data(
         data_start_date,
         data_end_date,
         data_dir,
+        source=METAR_DATA_SOURCE,
         refresh=refresh,
         remove_original=remove_original,
         verbose=verbose,

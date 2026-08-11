@@ -1,5 +1,5 @@
 '''
-Functionality to extract data filtered by region or station from MADIS Mesonet files.
+Functionality to extract data filtered by region or station from MADIS station-data files.
 
 The implementation identifies stations whose reported locations change beyond
 selected thresholds. ``filter_by_region`` uses two explicit phases:
@@ -32,7 +32,7 @@ import shapely
 import xarray as xr
 
 from madis_data import progress, region_codes
-from madis_data.mesonet import mesonet_station_ids2strings
+from madis_data.stations import station_ids2strings
 
 STATION_LATITUDE_CHANGE_THRESHOLD_DEG = 0.01
 STATION_LONGITUDE_CHANGE_THRESHOLD_DEG = 0.01
@@ -45,7 +45,7 @@ STATION_COORDINATE_WARNING = (
 
 
 def filter_by_id(
-    madis_mesonet_files: list[Path],
+    madis_files: list[Path],
     station_id: str,
     n_jobs: int = 1,
     *,
@@ -57,7 +57,7 @@ def filter_by_id(
     elevation_change_threshold_m: float = STATION_ELEVATION_CHANGE_THRESHOLD_M,
 ) -> xr.Dataset:
     '''
-    Extract one station from MADIS Mesonet files.
+    Extract one station from MADIS station-data files.
 
     The first pass identifies records belonging to the requested station and
     checks its coordinates across all files. A station whose coordinates exceed
@@ -67,8 +67,8 @@ def filter_by_id(
 
     Parameters
     ----------
-    madis_mesonet_files
-        Paths of source MADIS Mesonet netCDF files.
+    madis_files
+        Paths of source MADIS station-data netCDF files.
     station_id
         Exact decoded station identifier to extract.
     n_jobs
@@ -103,8 +103,8 @@ def filter_by_id(
     '''
 
     # Reject an empty source-file sequence before scanning station metadata.
-    if not madis_mesonet_files:
-        raise ValueError('No MADIS Mesonet files were provided.')
+    if not madis_files:
+        raise ValueError('No MADIS station-data files were provided.')
 
     # Reject nonpositive worker counts before creating an executor.
     if n_jobs < 1:
@@ -120,9 +120,9 @@ def filter_by_id(
         raise ValueError('Station-location thresholds must be finite and nonnegative.')
 
     # Normalize all supplied path-like values to Path objects.
-    madis_mesonet_files = [Path(path) for path in madis_mesonet_files]
+    madis_files = [Path(path) for path in madis_files]
     # Count files once for progress reporting.
-    file_count = len(madis_mesonet_files)
+    file_count = len(madis_files)
 
     # Initialize the ordered per-file station indexes.
     file_indices: list[_FileStationIdIndex] = []
@@ -133,7 +133,7 @@ def filter_by_id(
 
     # Add progress reporting around the ordered file sequence.
     metadata_paths = progress.iterate_with_progress(
-        madis_mesonet_files,
+        madis_files,
         total=file_count,
         description='Scanning station metadata',
         units='files',
@@ -308,7 +308,7 @@ def filter_by_id(
 
 
 def filter_by_region(
-    madis_mesonet_files: list[Path],
+    madis_files: list[Path],
     region_code: str,
     n_jobs: int = 1,
     *,
@@ -331,8 +331,8 @@ def filter_by_region(
 
     Parameters
     ----------
-    madis_mesonet_files
-        Ordered paths of source MADIS Mesonet netCDF files.
+    madis_files
+        Ordered paths of source MADIS station-data netCDF files.
     region_code
         State or RTO/ISO code recognized by ``region_codes``.
     n_jobs
@@ -375,9 +375,9 @@ def filter_by_region(
     '''
 
     # Reject an empty source-file sequence before regional preparation.
-    if not madis_mesonet_files:
+    if not madis_files:
         # Report the missing required inputs.
-        raise ValueError('No MADIS Mesonet files were provided.')
+        raise ValueError('No MADIS station-data files were provided.')
 
     # Reject nonpositive worker counts before creating an executor.
     if n_jobs < 1:
@@ -394,9 +394,9 @@ def filter_by_region(
         raise ValueError('Station-location thresholds must be finite and nonnegative.')
 
     # Normalize all supplied path-like values to Path objects.
-    madis_mesonet_files = [Path(path) for path in madis_mesonet_files]
+    madis_files = [Path(path) for path in madis_files]
     # Count files once for progress reporting.
-    file_count = len(madis_mesonet_files)
+    file_count = len(madis_files)
 
     # Read, transform, dissolve, and prepare the regional geometry.
     region = _prepare_region(region_code)
@@ -408,7 +408,7 @@ def filter_by_region(
 
     # Add progress reporting around the ordered file sequence.
     catalogue_paths = progress.iterate_with_progress(
-        madis_mesonet_files,
+        madis_files,
         total=file_count,
         description='Scanning station metadata',
         units='files',
@@ -1428,7 +1428,7 @@ def _factorize_station_ids(
     '''
 
     # Decode fixed-width MADIS identifiers once.
-    decoded = np.asarray(mesonet_station_ids2strings(station_id_variable))
+    decoded = np.asarray(station_ids2strings(station_id_variable))
 
     # Validate the decoded array against the source record count.
     if decoded.ndim != 1 or decoded.size != station_id_variable.size:
@@ -1699,7 +1699,7 @@ def _record_positions_for_station_id(
     '''Return record positions matching one decoded station identifier.'''
 
     # Decode fixed-width MADIS identifiers once.
-    decoded = np.asarray(mesonet_station_ids2strings(station_id_variable))
+    decoded = np.asarray(station_ids2strings(station_id_variable))
 
     # Validate the decoded array against the source record count.
     if decoded.ndim != 1 or decoded.size != station_id_variable.size:
@@ -1710,7 +1710,7 @@ def _record_positions_for_station_id(
 
 
 def _scan_file_station_id_metadata(
-    madis_mesonet_file: Path,
+    madis_file: Path,
     *,
     station_id: str,
     location_catalogue: _StationLocationCatalogue,
@@ -1724,7 +1724,7 @@ def _scan_file_station_id_metadata(
 
     # Open the source without constructing unnecessary default indexes.
     ds = xr.open_dataset(
-        madis_mesonet_file,
+        madis_file,
         create_default_indexes=False,
     )
 
@@ -1788,14 +1788,14 @@ def _scan_file_station_id_metadata(
         ds.close()
 
     return _FileStationIdIndex(
-        path=madis_mesonet_file,
+        path=madis_file,
         record_dimension=record_dimension,
         record_positions=record_positions if retain_record_index else None,
     )
 
 
 def _scan_file_station_metadata(
-    madis_mesonet_file: Path,
+    madis_file: Path,
     *,
     location_catalogue: _StationLocationCatalogue,
     retain_record_index: bool,
@@ -1811,7 +1811,7 @@ def _scan_file_station_metadata(
 
     Parameters
     ----------
-    madis_mesonet_file
+    madis_file
         Source netCDF file.
     location_catalogue
         Global location catalogue extended in first-encounter order.
@@ -1837,7 +1837,7 @@ def _scan_file_station_metadata(
 
     # Open the source without constructing unnecessary default indexes.
     ds = xr.open_dataset(
-        madis_mesonet_file,
+        madis_file,
         create_default_indexes=False,
     )
 
@@ -1881,7 +1881,7 @@ def _scan_file_station_metadata(
 
     # Package the record mapping required by the extraction pass.
     file_index = _FileStationIndex(
-        path=madis_mesonet_file,
+        path=madis_file,
         record_dimension=record_dimension,
         record_location_codes=(_compact_station_codes(record_location_codes) if retain_record_index else None),
     )

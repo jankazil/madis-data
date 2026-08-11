@@ -26,6 +26,7 @@ from cartopy.mpl.ticker import (
 from dateutil import rrule
 
 from madis_data.stations import (
+    InvalidStationDataFileError,
     StationDataSource,
     download_station_data,
     extract_station_files,
@@ -411,7 +412,7 @@ def preprocess_metar_file(file_path: Path, varnames: str | list[str]) -> xr.Data
 
         Raises
         ------
-        ValueError
+        InvalidStationDataFileError
             If any required variable is absent.
         '''
         # Identify required variables that are absent from the file.
@@ -419,7 +420,7 @@ def preprocess_metar_file(file_path: Path, varnames: str | list[str]) -> xr.Data
 
         if missing:
             source = ds.encoding.get('source')
-            raise ValueError(f'Missing data variables: {missing} in {source}')
+            raise InvalidStationDataFileError(f'Missing data variables: {missing} in {source}')
 
         # Return only the requested variables.
         return ds[varnames]
@@ -428,7 +429,28 @@ def preprocess_metar_file(file_path: Path, varnames: str | list[str]) -> xr.Data
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
 
-        ds = xr.open_mfdataset(file_path, preprocess=preprocess)
+        ds = xr.open_mfdataset(file_path, preprocess=preprocess, decode_times=False)
+
+        # Retain only observation times in the supported half-open interval.
+        time_obs = ds['timeObs']
+        time_min = np.datetime64('1970-01-01T00:00:00', 's').astype(np.int64)
+        time_max = np.datetime64('3000-01-01T00:00:00', 's').astype(np.int64)
+        valid_time = (time_obs >= time_min) & (time_obs < time_max)
+        valid_time_values = np.asarray(valid_time.compute().values, dtype=bool)
+
+        if not np.any(valid_time_values):
+            source = ds.encoding.get('source', file_path)
+            ds.close()
+            raise InvalidStationDataFileError(
+                f'No valid timeObs values in {source}; expected times in [1970-01-01, 3000-01-01).'
+            )
+
+        if not np.all(valid_time_values):
+            record_dimension = time_obs.dims[0]
+            ds = ds.isel({record_dimension: np.flatnonzero(valid_time_values)})
+
+        # Decode the validated numeric observation times.
+        ds = xr.decode_cf(ds)
 
         # Rename METAR identifier and time fields to the shared output schema.
         ds = ds.rename({'stationName': 'stationId', 'timeObs': 'time'})

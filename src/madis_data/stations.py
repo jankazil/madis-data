@@ -21,6 +21,10 @@ import xarray as xr
 from madis_data.web import download_threaded, gzip_file_is_valid
 
 
+class InvalidStationDataFileError(ValueError):
+    '''Indicate that a station-data file cannot be processed safely.'''
+
+
 @dataclass(frozen=True)
 class StationDataSource:
     '''Describe the product-specific operations used by shared station helpers.'''
@@ -310,7 +314,12 @@ def download_station_data(
         if preprocess:
             file_paths_preprocessed_short_list = local_file_paths_preprocessed(file_paths_short_list)
 
-            dss = extract_station_files(file_paths_short_list, source.extract_file, n_jobs=n_jobs)
+            dss = extract_station_files(
+                file_paths_short_list,
+                source.extract_file,
+                n_jobs=n_jobs,
+                skip_invalid=True,
+            )
             try:
                 if len(dss) < len(file_paths_short_list):
                     raise ValueError(
@@ -326,6 +335,11 @@ def download_station_data(
                 for ds, file_path_preprocessed, file_path in zip(
                     dss, file_paths_preprocessed_short_list, file_paths_short_list, strict=True
                 ):
+                    if ds is None:
+                        if remove_original:
+                            remove_source_file(file_path)
+                        continue
+
                     # Save the preprocessed dataset.
                     ds.to_netcdf(file_path_preprocessed)
 
@@ -337,7 +351,8 @@ def download_station_data(
             finally:
                 # Release every processed dataset if validation or writing fails.
                 for ds in dss:
-                    ds.close()
+                    if ds is not None:
+                        ds.close()
 
         else:
             # Record the downloaded original MADIS station-data file paths.
@@ -363,7 +378,8 @@ def extract_station_files(
     file_paths: list[Path],
     extract_file: Callable[[Path], xr.Dataset],
     n_jobs: int = 1,
-) -> list[xr.Dataset]:
+    skip_invalid: bool = False,
+) -> list[xr.Dataset | None]:
     '''
     Preprocess multiple MADIS station-data files in parallel.
 
@@ -375,12 +391,29 @@ def extract_station_files(
         Product-specific single-file preprocessing function.
     n_jobs : int, optional
         Number of worker threads. The default is 1.
+    skip_invalid : bool, optional
+        If True, replace files raising ``InvalidStationDataFileError`` with
+        ``None`` instead of aborting processing. The default is False.
 
     Returns
     -------
-    list[xr.Dataset]
-        Preprocessed datasets in the same order as ``file_paths``.
+    list[xr.Dataset | None]
+        Preprocessed datasets in the same order as ``file_paths``. Entries for
+        invalid files are None when ``skip_invalid`` is True.
     '''
+
+    def extract_one(file_path: Path) -> xr.Dataset | None:
+        try:
+            return extract_file(file_path)
+        except InvalidStationDataFileError as error:
+            if not skip_invalid:
+                raise
+
+            warnings.warn(
+                f'Skipping invalid MADIS station-data file {file_path}: {error}',
+                stacklevel=1,
+            )
+            return None
 
     # Collect datasets as workers complete in input order.
     dss = []
@@ -388,14 +421,15 @@ def extract_station_files(
     try:
         # Process files concurrently while preserving their order.
         with ThreadPoolExecutor(max_workers=n_jobs) as executor:
-            for ds in executor.map(extract_file, file_paths):
+            for ds in executor.map(extract_one, file_paths):
                 dss.append(ds)
         completed = True
     finally:
         if not completed:
             # Release datasets returned before another worker failed.
             for ds in dss:
-                ds.close()
+                if ds is not None:
+                    ds.close()
 
     return dss
 

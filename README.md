@@ -2,7 +2,7 @@
 
 **madis-data** produces analysis-ready full-hour [MADIS Mesonet](https://madis.ncep.noaa.gov/madis_mesonet.shtml) and [MADIS Metar](https://madis.ncep.noaa.gov/madis_metar.shtml) datasets for arbitrary date ranges and operationally meaningful U.S. regions or individual stations as netCDF files.
 
-Currently, **madis-data** operates with the following publicly available MADIS [Mesonet](https://madis.ncep.noaa.gov/madis_mesonet.shtml) and [MADIS Metar](https://madis.ncep.noaa.gov/madis_metar.shtml) observables:
+Currently, **madis-data** operates with the following publicly available MADIS [Mesonet](https://madis.ncep.noaa.gov/madis_mesonet.shtml) and [Metar](https://madis.ncep.noaa.gov/madis_metar.shtml) observables:
 
 - 2 m temperature,
 - 2 m dewpoint temperature,
@@ -40,7 +40,7 @@ The kernel will then appear in Jupyter as `Python (<environment-name>)`.
 
 The package provides command-line tools that:
 
-- select stations by geography (an individual MADIS or Metar station, a U.S. state, a Regional Transmission Organization/Independent System Operator regions, and the special region CONUS representing the contiguous United States),
+- select stations by geography (an individual Mesonet or Metar station, a U.S. state, a Regional Transmission Organization/Independent System Operator regions, and the special region CONUS representing the contiguous United States),
 - download Mesonet or Metar observation files for a specified date range,
 - extract, preprocess, and save in netCDF files the observables
     - 2 m temperature,
@@ -96,7 +96,7 @@ build-mesonet-dataset --help
 # through 00:00 UTC on January 31, 2026, and save the results in /path/to/data:
 build-mesonet-dataset -v 2026 1 1 2026 1 31 SMPC2 /path/to/data
 
-# Build datasets for Colorado using 16 parallel workers and remove source files after preprocessing:
+# Build MADIS Metar datasets for Colorado using 16 parallel workers and remove source files after preprocessing:
 build-metar-dataset -v 2026 1 1 2026 2 1 CO /path/to/data -n 16 --remove-original
 
 ```
@@ -109,12 +109,11 @@ MADIS Mesonet data files represent > 30000 stations and are large. Downloading t
 
 The detailed workflow is documented in the [HowTo](https://github.com/jankazil/madis-data/blob/main/notebooks/HowTo.ipynb) Jupyter notebook. The notebook performs the following tasks:
 
-1. download Mesonet surface observations data files for January 2026 from the MADIS archive,
+1. download Metar surface observations data files for January 2026 from the MADIS archive,
 2. extract January 2026 data for stations in the state of Colorado of the following observables:
     - 2 m temperature,
     - 2 m dewpoint temperature,
     - 10 m west-east and south-north wind speed,
-    - solar radiation
 3. save the extracted data in a s netCDF file,
 4. interpolate the data to full-hourly time series,
 5. save the full-hourly time series in a netCDF file,

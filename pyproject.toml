@@ -52,6 +52,7 @@ madis_data = [
     "data/EIA/*.geojson",
     "data/CensusBureau/US_states/*",
     "data/NOAA/*",
+    "data/UCAR/*",
 ]
 
 [tool.ruff]

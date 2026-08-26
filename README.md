@@ -125,7 +125,8 @@ The Bash scripts
 
 can be executed from within the directory ./scripts. They download MADIS Mesonet or Metar surface observation data files from the MADIS archive, respectively, and build full-hourly datasets for Colorado for January 2026, in the directory ./data.
 
-### Requirements
+**Requirements**  
+
 The **madis-data** Python package must be installed in the environment in which the scripts are called.
 
 ## Workflow using API
@@ -145,7 +146,8 @@ The **madis-data** workflow is documented in the [HowTo](https://github.com/jank
 
 The analogous workflow applies to MADIS Metar data.
 
-### Requirements
+**Requirements**  
+
 The notebook requires a Jupyter kernel being available in the Python environment in which madis-data has been installed (Section "Jupyter").
 <!--
 ## Executables

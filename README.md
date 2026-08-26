@@ -9,6 +9,8 @@ Currently, **madis-data** operates with the following publicly available MADIS [
 - 10 m west-east and south-north wind speed,
 - solar radiation (Mesonet only).
 
+The Jupyter notebook [HowTo](https://github.com/jankazil/madis-data/blob/main/notebooks/HowTo.ipynb) gives an overview of the functionality **madis-data** provides.
+
 MADIS Mesonet and Metar data are provided by the [National Centers for Environmental Prediction](https://www.weather.gov/ncep/).
 
 ## Installation
@@ -57,9 +59,20 @@ Once preprocessed files with the above variables have been generated for a given
 
 Geospatial region selection is based on U.S. Energy Information Administration definitions of Regional Transmission Organization/Independent System Operator footprints and U.S. Census Bureau state and territory boundaries included with the package.
 
-## Command-line interface (CLI)
+## Workflow using command-line interface (CLI)
 
-The CLI is exposed as `"build-mesonet-dataset"` and `"build-metar-dataset"` when installed.
+The CLI is exposed as `"build-mesonet-dataset"` and `"build-metar-dataset"` when installed. These executables
+
+1. download Mesonet or Metar surface observations data files, respectively, for a given time range from the MADIS archive,
+2. extract data of the following observables for stations in a given region:
+    - 2 m temperature,
+    - 2 m dewpoint temperature,
+    - 10 m west-east and south-north wind speed,
+    - solar radiation (Mesonet only).
+3. save the regional data in a netCDF file,
+4. interpolate the regional data to full-hourly time series,
+5. save the full-hourly time series for the stations in the region in a netCDF file,
+6. plot the stations in the region on a US map and save it as a PNG file.
 
 **Usage**
 
@@ -101,13 +114,23 @@ build-metar-dataset -v 2026 1 1 2026 2 1 CO /path/to/data -n 16 --remove-origina
 
 ```
 
-**Notes**
+**Example scripts**
 
-MADIS Mesonet data files represent > 30000 stations and are large. Downloading the hourly files for extended periods of time can take hours to days. Creating full-hourly time series requires sufficient computing power and RAM. E.g., creating the full-hourly time series for stations in Texas, for the period 2021-2025, takes on a machine with 128 GB RAM and 8 cores in approximately 4 h. Downloading and processing MADIS Metar data files takes significantly less time owing to the lower number of Metar stations.
+The Bash scripts
 
-## Workflow (using API)
+```bash
+./scripts/Download_MADIS_Mesonet.CO.2026-01.sh
+./scripts/Download_MADIS_Metar.CO.2026-01.sh
+```
 
-The detailed workflow is documented in the [HowTo](https://github.com/jankazil/madis-data/blob/main/notebooks/HowTo.ipynb) Jupyter notebook. The notebook performs the following tasks:
+can be executed from within the directory ./scripts. They download MADIS Mesonet or Metar surface observation data files from the MADIS archive, respectively, and build full-hourly datasets for Colorado for January 2026, in the directory ./data.
+
+### Requirements
+The **madis-data** Python package must be installed in the environment in which the scripts are called.
+
+## Workflow using API
+
+The **madis-data** workflow is documented in the [HowTo](https://github.com/jankazil/madis-data/blob/main/notebooks/HowTo.ipynb) Jupyter notebook. The notebook performs the following tasks:
 
 1. download Metar surface observations data files for January 2026 from the MADIS archive,
 2. extract January 2026 data for stations in the state of Colorado of the following observables:
@@ -133,6 +156,11 @@ The notebook requires a Jupyter kernel being available in the Python environment
 
 ## Notes
 -->
+## Notes
+
+MADIS Mesonet data files represent > 30000 stations. Downloading the hourly files for extended periods of time can take hours to days. Creating full-hourly time series requires sufficient computing power and RAM. E.g., creating the full-hourly time series for stations in Texas, for the period 2021-2025, takes on a machine with 128 GB RAM and 8 cores approximately 4 h. Downloading and processing MADIS Metar data files takes significantly less time owing to the lower number of Metar stations.
+
+
 ## Development
 
 ### Code Quality and Testing Commands
@@ -145,9 +173,13 @@ The notebook requires a Jupyter kernel being available in the Python environment
 
 ## Disclaimers
 
-The data accessed by this software are publicly available from NOAA's National Centers for Environmental Prediction (NCEP) and are subject to their terms of use. This project is not affiliated with or endorsed by NOAA.
+This software uses publicly available NOAA National Centers for Environmental Prediction (NCEP) data that are subject to their terms of use, but is neither affiliated, endorsed, or certified by NOAA or NCEP.
 
-This software uses U.S. Census Bureau and U.S. Energy Information Administration data, but is neither endorsed nor certified by the U.S. Census Bureau or the U.S. Energy Information Administration.
+This software uses publicly available U.S. Census Bureau data that are subject to their terms of use, but is neither affiliated, endorsed, or certified by the U.S. Census Bureau.
+
+This software uses publicly available U.S. Energy Information Administration data that are subject to their terms of use, but is neither affiliated, endorsed, or certified by the U.S. Energy Information Administration.
+
+This software uses publicly available University Corporation for Atmospheric Research (UCAR) data that are subject to their terms of use, but is neither affiliated, endorsed, or certified by UCAR.
 
 ## Author
 

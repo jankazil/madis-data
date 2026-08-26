@@ -127,7 +127,7 @@ can be executed from within the directory ./scripts. They download MADIS Mesonet
 
 **Requirements**  
 
-The **madis-data** Python package must be installed in the environment in which the scripts are called.
+The **madis-data** package must be installed in the Python environment in which the scripts are called.
 
 ## Workflow using API
 

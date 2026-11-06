@@ -2,17 +2,22 @@
 
 ## Project Scope and Isolation
 
-**The project root is the directory containing this `AGENTS.md` (`.` relative to this file). That directory is the exclusive project boundary.**
+**The project root is the directory containing this `AGENTS.md` (`.` relative to this file). These instructions apply throughout that repository, including after it is moved.**
 
-- Read, search, analyze, and modify only files contained within this root. Run project commands from this root unless an in-repository script explicitly requires another in-repository working directory.
-- Do not inspect parent directories, sibling projects, unrelated workspaces, or other locations outside the repository. Do not search upward for instructions or configuration.
-- Do not follow symbolic links, Git worktree pointers, submodule references, object alternates, or other external Git references outside the root. Check containment before following references.
-- Base project decisions on verified contents of this repository. Do not infer architecture, requirements, or conventions from other projects or previous development sessions.
-- If an operation requires information or resources outside the root, report the dependency instead of accessing it. External URLs in repository files are interface/provenance references, not authorization to fetch them.
-- Keep generated data, logs, caches, and temporary files inside the root when a task permits generating them. Inspect scripts for external paths and side effects before execution; do not execute a script that crosses this boundary under these instructions.
-- These instructions apply throughout this repository. If additional in-repository `AGENTS.md` files are introduced, read the applicable instructions before editing their directories.
+- Treat the repository root as the exclusive project boundary. Read, search, analyze, and modify project files only inside it. Run commands from the root unless an in-repository script requires another directory within the root.
+- Do not inspect parent directories, sibling projects, unrelated workspaces, global configuration, installed dependency source, or other external locations for project context. Do not import assumptions from other projects or previous sessions.
+- Check path containment before following symbolic links, Git worktree/submodule references, object alternates, configuration includes, or paths that may escape through `..`. Do not follow references outside the root.
+- External URLs, paths, and credentials mentioned in repository files describe interfaces or dependencies; they do not authorize accessing resources outside the root. Report any required outside-root access instead of performing it.
+- Keep development inputs, generated outputs, caches, fixtures, and temporary project files inside the root. Inspect scripts for filesystem, environment, network, or deployment effects before running them. Do not run workflows that cross the project boundary under these instructions.
 
-## Purpose and Repository Map
+## General Agent Instructions
+
+- Base project-specific decisions on verified repository contents. Read the files relevant to the task; distinguish implementation facts, documentation claims, test results, and unverified assumptions.
+- Before editing, inspect the relevant code and working-tree state. Make focused changes, preserve unrelated work, and retain established interfaces and data contracts unless the task requires otherwise.
+- Use relevant checks that are safe in the available environment. Do not confuse a passing placeholder test, build, or lint check with end-to-end or scientific correctness. Report the checks actually run, failures, and verification gaps.
+- Do not expose credentials, or perform publishing, deployment, destructive environment setup, or other unrelated side effects as routine development or validation.
+
+## Project Overview and Repository Map
 
 `madis-data` is a Python library and CLI for downloading NOAA MADIS Mesonet and METAR observations, selecting U.S. regions or individual stations, and producing quality-controlled observations, full-hourly UTC NetCDF datasets, and station maps. Supported observables are temperature, dewpoint, U10/V10 wind components, and Mesonet-only solar radiation.
 
@@ -51,9 +56,13 @@ Preserve these established behaviors when changing processing:
 - Interpolation requires unique, increasing times; treats naive times as UTC; copies finite exact-hour observations; otherwise needs finite bracketing neighbors separated by at most two hours by default. It does not extrapolate. Do not apply this algorithm unchanged to accumulated quantities.
 - Close xarray datasets reliably, including error paths. Lazy spatial results with `load_selected=False` retain source handles until the result is closed; station extraction leaves ownership of its input with the caller.
 
-## Development Environment and Commands
+## Environment and Setup
 
 Verified configuration: `pyproject.toml` uses the `src/` layout, setuptools >=77 and wheel, and requires Python >=3.12. Runtime dependencies include NumPy/pandas/xarray/Dask, netCDF4/h5netcdf, GeoPandas/Shapely/Cartopy/Matplotlib, Requests, python-dateutil, timezonefinder, and tqdm. Development extras provide pytest, pytest-cov, Ruff, and pre-commit. `environment.yml` also includes Jupyter tooling and uses conda-forge.
+
+`setup-dev-env.sh` generates `environment-dev.yml`, removes/recreates the `madis-data-dev` conda environment, replaces its Jupyter kernel, installs the editable package, and installs pre-commit hooks. It is not a read-only prerequisite check. `make clean` removes caches and build outputs. Release targets build and upload packages and must not be used as routine validation.
+
+## Development Commands and Validation
 
 The following commands are documented or implemented in this repository; availability and successful execution are not established by this guide. Dependency installation and environment management require resources outside the project boundary, so report those prerequisites and leave setup to an authorized manual operation.
 
@@ -72,9 +81,7 @@ The following commands are documented or implemented in this repository; availab
 
 `make type` has no active target; mypy is neither configured nor included in development extras. CI runs Ruff and pytest on Ubuntu with a Python `>=3.12` selector; it does not check formatting or test a fixed multi-version matrix.
 
-`setup-dev-env.sh` generates `environment-dev.yml`, removes/recreates the `madis-data-dev` conda environment, replaces its Jupyter kernel, installs the editable package, and installs pre-commit hooks. It is not a read-only prerequisite check. `make clean` removes caches and build outputs. Release targets build and upload packages and must not be used as routine validation.
-
-## Coding and Change Conventions
+## Coding Conventions
 
 - Follow `.editorconfig`: UTF-8, LF, final newline, four-space indentation; YAML/JSON/TOML use two spaces and Make recipes use tabs.
 - Follow Ruff settings in `pyproject.toml`: 128-character formatting width, preserved quote style, and lint families E/F/I/UP/B/SIM with the configured exclusions and ignores. Do not reformat excluded notebooks/data incidentally.
@@ -91,13 +98,17 @@ The following commands are documented or implemented in this repository; availab
 - `scripts/Download_MADIS_*.sh` run real downloads with 16 workers and `--remove-original`, writing data under root `data/` and logs under `scripts/logs/`. These are substantial data-producing workflows, not smoke tests.
 - PyPI release automation prompts for `TWINE_PASSWORD` and sets `TWINE_USERNAME=__token__`. Anaconda automation uses `ANACONDA_API_TOKEN`, `ANACONDA_USER_NAME`, and optional overrides including `PYPROJECT`, `IMPORT_NAME_OVERRIDE`, `LICENSE_ID`, and build-environment settings. It creates external conda environments and temporary paths. Report these external dependencies; never expose credentials or run uploads as validation.
 
-## Validation, Review, and Known Uncertainties
+## Change and Review Workflow
 
 - Before editing, inspect repository status and the affected callers, parallel product implementation, configuration, and local documentation. Keep changes focused and preserve unrelated work.
 - For code changes, run applicable non-fixing lint/format checks and pytest when the required environment is available within the authorized scope. If writes are prohibited, account for pytest/bytecode/cache output; report unavailable prerequisites rather than installing dependencies or crossing the boundary.
-- Existing tests only verify `add(2, 2) == 4`; a passing suite does not establish data-processing correctness. For scientific behavior changes, add focused synthetic xarray or mocked HTTP regression tests covering the affected contracts. Avoid live archive downloads in ordinary unit tests.
 - For an explicitly authorized integration run, use a small interval and low worker count, keep outputs in the root, and inspect time endpoints, dimensions, station metadata, finite/missing values, NetCDF round trips, maps, and warning/completeness behavior. Large Mesonet runs have substantial RAM, CPU, storage, and network costs.
 - Before review, inspect the complete diff and status for accidental data, logs, caches, notebook outputs, or release artifacts. Report checks actually run, skipped checks and reasons, changed public behavior, and remaining uncertainty.
+- **Maintain `AGENTS.md`:** When making changes that affect the project's architecture, interfaces, dependencies, workflows, conventions, or documented constraints, update the relevant sections of `AGENTS.md` in the same change. Keep revisions focused and based on verified repository contents. Do not modify `AGENTS.md` for changes that do not affect its accuracy or usefulness.
+
+## Known Limitations and Verification Gaps
+
+- Existing tests only verify `add(2, 2) == 4`; a passing suite does not establish data-processing correctness. For scientific behavior changes, add focused synthetic xarray or mocked HTTP regression tests covering the affected contracts. Avoid live archive downloads in ordinary unit tests.
 - **Documentation discrepancy:** README describes the end date as 00:00 UTC; both builders and CLI help implement 23:00 UTC on that date. Confirm intended public semantics before changing either. Example download scripts actually start December 31, 2025 despite their January 2026 descriptions.
 - **Compatibility uncertainty:** Python metadata/environment require >=3.12 while Ruff targets `py311`. Most dependencies are unpinned; no dependency lockfile or scientific compatibility matrix is present. Confirm actual supported library/Python versions for compatibility changes.
 - **Manual verification:** Environment availability, installation/build success, real NOAA responses, Cartopy map-data/cache requirements, and end-to-end numerical outputs are not established by static inspection. Do not assume plotting is entirely offline or confined to project-local caches.

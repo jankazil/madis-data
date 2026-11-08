@@ -81,6 +81,8 @@ The following commands are documented or implemented in this repository; availab
 
 `make type` has no active target; mypy is neither configured nor included in development extras. CI runs Ruff and pytest on Ubuntu with a Python `>=3.12` selector; it does not check formatting or test a fixed multi-version matrix.
 
+The CI test suite is intentionally limited to `tests/test_main.py`, which asserts `hrrr_ml.test.add(2, 2) == 4`. Do not add further CI tests unless explicitly requested by the user. Passing this placeholder does not establish numerical, model, netCDF, or operational correctness. For behavioral changes, use relevant safe checks with small in-repository inputs and report what was actually verified. Avoid live network calls and expensive retraining as default validation. Keep temporary verification files inside the repository and report validation limits explicitly.
+
 ## Coding Conventions
 
 - Follow `.editorconfig`: UTF-8, LF, final newline, four-space indentation; YAML/JSON/TOML use two spaces and Make recipes use tabs.

@@ -36,7 +36,6 @@ build-metar-dataset = "madis_data.build_metar_dataset:main" # Connects name of e
 dev = [
   "pytest>=8",
   "pytest-cov>=5",
-  "ruff>=0.5",
   "pre-commit>=3.7",
 ]
 

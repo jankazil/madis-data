@@ -2,10 +2,10 @@
 #.PHONY: fmt lint type test check clean setup-dev-env upload-pypi upload-anaconda
 
 fmt:
-	python -m ruff format
+	ruff format
 
 lint:
-	python -m ruff check --fix
+	ruff check --fix
 
 #type:
 #	python -m mypy
